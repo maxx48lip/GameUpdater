@@ -1,0 +1,55 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-test-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build solution
+        run: dotnet build GameUpdater/GameUpdater.sln -c Release --nologo
+
+      - name: Run tests
+        run: dotnet run --project GameUpdater/src/GameUpdater.Tests -c Release --no-build
+
+      # Self-contained publish for all target platforms from a single Linux runner.
+      - name: Publish self-contained binaries (all RIDs)
+        run: |
+          for rid in win-x64 linux-x64 linux-arm64 osx-x64 osx-arm64; do
+            dotnet publish GameUpdater/src/GameUpdater.Exporter \
+              -c Release -r "$rid" --self-contained true --nologo \
+              -o "publish/$rid"
+          done
+
+      - name: Package release assets
+        run: |
+          mkdir -p release-assets
+          for rid in win-x64 linux-x64 linux-arm64 osx-x64 osx-arm64; do
+            (cd "publish/$rid" && zip -qr "../../release-assets/gameup-exporter-$rid.zip" .)
+          done
+          (cd release-assets && sha256sum *.zip > SHA256SUMS.txt)
+
+      # Auto-release per push: prerelease, tag = date + short commit SHA.
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
+          gh release create "$TAG" \
+            --title "GameUpdater Exporter $TAG" \
+            --prerelease \
+            --generate-notes \
+            release-assets/*.zip release-assets/SHA256SUMS.txt
