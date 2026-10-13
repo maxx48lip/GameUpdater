@@ -1,0 +1,11 @@
+{
+  "sftpHost": "files.example.com",
+  "sftpPort": 22,
+  "sftpUser": "exporter",
+  "sftpKeyPath": "~/.ssh/id_ed25519",
+  "remoteBasePath": "/srv/gamefiles",
+  "ignorePatterns": [ "*.log", "*.pdb", "local_version.json", ".DS_Store" ],
+  "minLauncherVersion": "1.0.0",
+  "uploadMode": "perFile",
+  "maxRetries": 3
+}
