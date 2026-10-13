@@ -1,0 +1,23 @@
+# =============================================================================
+# sftp-exporter — фрагмент /etc/ssh/sshd_config (Task 3)
+#
+# Это эталонная копия того, что setup-vps.sh устанавливает в
+# /etc/ssh/sshd_config.d/10-gamefiles.conf.
+#
+# Debian 12 включает /etc/ssh/sshd_config.d/*.conf в НАЧАЛЕ sshd_config, и sshd
+# использует первое встреченное значение директивы — префикс "10-" гарантирует,
+# что эти значения имеют приоритет над другими drop-in'ами (например, cloud-init).
+# =============================================================================
+
+# Только ключевая аутентификация; root — без пароля.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin prohibit-password
+
+# SFTP-пользователь exporter: chroot + только internal-sftp, без shell/форвардов.
+Match User exporter
+    ChrootDirectory /srv/gamefiles
+    ForceCommand internal-sftp
+    AllowTcpForwarding no
+    X11Forwarding no
