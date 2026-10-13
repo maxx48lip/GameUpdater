@@ -1,7 +1,8 @@
 # GameUpdater
 
-Система обновления игры: **Exporter** (сборка → манифест → заливка по SFTP), **Launcher**
-(проверка версии, докачка файлов, запуск игры) и общий модуль **Shared**.
+Система автообновления игры: **Exporter** (сборка → манифест → заливка по SFTP), **Launcher**
+(проверка версии, докачка файлов, запуск игры), общий модуль **Shared** и серверная часть на VPS
+(Nginx в Docker + OpenSSH SFTP).
 
 - Платформа: **.NET 10 (LTS)**, консольные приложения.
 - **Никаких NuGet-пакетов** — только shared framework (`System.Text.Json`,
@@ -9,43 +10,69 @@
 - SFTP — через внешний клиент OpenSSH (`sftp` / `sftp.exe`), без сторонних библиотек.
 - Целевые ОС: Windows 10+, Linux (x64/arm64), macOS 12+ (Intel и Apple Silicon).
 
-## Структура решения
+## Структура репозитория
 
 ```text
-GameUpdater/
-├── GameUpdater.sln
-└── src/
-    ├── GameUpdater.Shared/        # Class Library, net10.0
-    │   ├── Models/                # VersionInfo, Manifest, FileEntry (System.Text.Json)
-    │   ├── HashCalculator.cs      # потоковый MD5
-    │   ├── PathNormalizer.cs      # unix-пути, расширение ~
-    │   ├── AnsiConsole.cs         # цветной лог + прогресс-бар (ANSI)
-    │   ├── ByteFormat.cs          # "12.3 MB" и т.п.
-    │   └── SftpClientWrapper.cs   # обёртка над внешним процессом sftp
-    ├── GameUpdater.Exporter/      # Console, net10.0 (бинарь: exporter)
-    │   ├── Program.cs             # точка входа, ручной разбор args[]
-    │   ├── CliOptions.cs          # парсинг CLI + usage
-    │   ├── ExporterConfig.cs      # модель exporter.json
-    │   ├── ManifestBuilder.cs     # обход папки, ignorePatterns, MD5, сортировка
-    │   ├── SftpUploader.cs        # заливка: files → manifest.json → version.json
-    │   └── exporter.json          # пример конфигурации
-    ├── GameUpdater.Launcher/      # Console, net10.0 (бинарь: launcher)
-    │   ├── Program.cs             # точка входа: конфиг → версия → манифест → диф → скачивание → запуск
-    │   ├── CliOptions.cs          # парсинг CLI + usage
-    │   ├── LauncherConfig.cs      # модель launcher.json
-    │   ├── UpdateChecker.cs       # версии, диф по манифесту (размер/MD5), excludeFromDelete
-    │   ├── FileDownloader.cs      # 3 потока, .tmp + атомарный Move, ретраи, проверка хеша
-    │   ├── GameLauncher.cs        # запуск игры: Windows / Linux (chmod +x) / macOS (.app)
-    │   └── launcher.json          # пример конфигурации
-    └── GameUpdater.Tests/         # Console-тесты без NuGet (свои Assert)
+RemasterLoading/
+├── GameUpdater/                 # .NET-решение (клиентская часть)
+│   ├── GameUpdater.sln
+│   └── src/
+│       ├── GameUpdater.Shared/        # Class Library, net10.0
+│       │   ├── Models/                # VersionInfo, Manifest, FileEntry (System.Text.Json)
+│       │   ├── HashCalculator.cs      # потоковый MD5
+│       │   ├── PathNormalizer.cs      # unix-пути, расширение ~
+│       │   ├── AnsiConsole.cs         # цветной лог + прогресс-бар (ANSI)
+│       │   ├── ByteFormat.cs          # "12.3 MB" и т.п.
+│       │   └── SftpClientWrapper.cs   # обёртка над внешним процессом sftp
+│       ├── GameUpdater.Exporter/      # Console, net10.0 (бинарь: exporter)
+│       │   ├── Program.cs             # точка входа, ручной разбор args[]
+│       │   ├── CliOptions.cs          # парсинг CLI + usage
+│       │   ├── ExporterConfig.cs      # модель exporter.json
+│       │   ├── ManifestBuilder.cs     # обход папки, ignorePatterns, MD5, сортировка
+│       │   ├── SftpUploader.cs        # заливка: files → manifest.json → version.json
+│       │   └── exporter.json          # пример конфигурации
+│       ├── GameUpdater.Launcher/      # Console, net10.0 (бинарь: launcher)
+│       │   ├── Program.cs             # точка входа: конфиг → версия → манифест → диф → скачивание → запуск
+│       │   ├── CliOptions.cs          # парсинг CLI + usage
+│       │   ├── LauncherConfig.cs      # модель launcher.json
+│       │   ├── UpdateChecker.cs       # версии, диф по манифесту (размер/MD5), excludeFromDelete
+│       │   ├── FileDownloader.cs      # 3 потока, .tmp + атомарный Move, ретраи, проверка хеша
+│       │   ├── GameLauncher.cs        # запуск игры: Windows / Linux (chmod +x) / macOS (.app)
+│       │   └── launcher.json          # пример конфигурации
+│       └── GameUpdater.Tests/         # Console-тесты без NuGet (свои Assert)
+├── server/                      # Серверная часть: VPS (Debian 12, Docker, Nginx, SFTP) — см. server/README.md
+│   ├── setup-vps.sh             # идемпотентный скрипт первичной настройки VPS
+│   ├── nginx.conf               # эталонная копия конфига Nginx (fileserver)
+│   ├── sshd_config_snippet      # эталонная копия фрагмента sshd (SFTP chroot для exporter)
+│   └── local-test.sh            # локальный тест: Nginx в Docker на localhost + тестовая сборка
+└── .github/workflows/release.yml  # CI: сборка, тесты, self-contained publish, GitHub Release
 ```
 
 ## Сборка и запуск тестов
 
 ```bash
-dotnet build GameUpdater.sln          # сборка всего решения
-dotnet run --project src/GameUpdater.Tests   # юнит-тесты ManifestBuilder/Shared
+dotnet build GameUpdater/GameUpdater.sln          # сборка всего решения
+dotnet run --project GameUpdater/src/GameUpdater.Tests   # юнит-тесты ManifestBuilder/Shared
 ```
+
+## Серверная часть
+
+VPS на Debian 12: Nginx в Docker (`fileserver`) отдаёт статику по HTTPS, OpenSSH SFTP (chroot)
+принимает заливку от Exporter. Развёртывание — `server/setup-vps.sh`, локальный тест без VPS —
+`server/local-test.sh`. Подробности: [`server/README.md`](server/README.md).
+
+> Для chroot-сервера из `setup-vps.sh` в `exporter.json` указывается **`remoteBasePath: "/www"`**
+> (путь внутри chroot), а не `/srv/gamefiles` (путь на диске) — см. `server/README.md`.
+
+## CI / Release (GitHub Actions)
+
+`.github/workflows/release.yml` — на каждый push в `main`:
+
+1. Сборка решения (`Release`) и прогон тестов.
+2. Self-contained publish Exporter и Launcher под `win-x64` и `osx-arm64`.
+3. Упаковка в zip + `SHA256SUMS.txt`.
+4. Создание GitHub **prerelease** с тегом `v<ГГГГ.ММ.ДД>-<sha7>` (артефакты:
+   `gameup-exporter-<rid>.zip`, `gameup-launcher-<rid>.zip`).
 
 ## Использование Exporter
 
@@ -100,7 +127,7 @@ exporter --version 1.0.5 --path ./build --config ./exporter.json
 |---|---|
 | `sftpHost`, `sftpPort`, `sftpUser` | Адрес SFTP-сервера (OpenSSH, порт по умолчанию 22) |
 | `sftpKeyPath` | Путь к приватному ключу (`~` раскрывается). **Рекомендуется.** |
-| `remoteBasePath` | Базовая папка на сервере (см. структуру ниже) |
+| `remoteBasePath` | Базовая папка на сервере (см. структуру ниже; для chroot-сервера — `/www`) |
 | `ignorePatterns` | Глоб-паттерны (`*`, `?`) для файлов и каталогов; применяются к имени файла и относительному пути, без учёта регистра |
 | `minLauncherVersion` | Попадает в `version.json` (по умолчанию `1.0.0`) |
 | `uploadMode` | `perFile` (по умолчанию) или `batch` — см. ниже |
@@ -180,7 +207,7 @@ launcher [--config <file>] [options]
 Алгоритм: версия → совпадают? запуск игры : манифест → диф (нет файла / размер / MD5) →
 параллельное скачивание 3 потоками во `.tmp` с проверкой хеша и атомарным Move (ретраи до 3 раз)
 → удаление лишних файлов → запись `local_version.json` → запуск игры.
-Ctrl+C — отмена, удаление `.tmp`, код выхода 130. Подробности: `src/GameUpdater.Launcher/README.md`.
+Ctrl+C — отмена, удаление `.tmp`, код выхода 130. Подробности: `GameUpdater/src/GameUpdater.Launcher/README.md`.
 
 ## Форматы манифестов
 
@@ -233,7 +260,7 @@ Ctrl+C — отмена, удаление `.tmp`, код выхода 130. По�
 ## Тестирование
 
 ```bash
-dotnet run --project src/GameUpdater.Tests
+dotnet run --project GameUpdater/src/GameUpdater.Tests
 ```
 
 Тесты без NuGet (собственные Assert-функции): обход папки, ignorePatterns
@@ -243,4 +270,5 @@ dotnet run --project src/GameUpdater.Tests
 удаление с учётом `excludeFromDelete`).
 
 Ручная проверка: `--dry-run` и `--skip-upload` на локальной папке; сверка хешей
-с `md5sum` (Linux) или `md5 -r` (macOS).
+с `md5sum` (Linux) или `md5 -r` (macOS). Серверную часть можно проверить без VPS через
+`server/local-test.sh` — см. `server/README.md`.

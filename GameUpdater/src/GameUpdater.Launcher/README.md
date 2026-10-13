@@ -87,8 +87,9 @@ Ctrl+C (`Console.CancelKeyPress`) → отмена загрузок, удале�
 
 ## Локальное тестирование
 
-Серверная часть — см. `Task_3_Server_VPS.md` (Nginx в Docker на localhost, без TLS или с
-самоподписанным сертификатом). Для быстрой проверки достаточно любого статического HTTP-сервера:
+Серверная часть — см. `server/README.md`: для локального теста есть `local-test.sh`
+(Nginx в Docker на localhost, HTTP без TLS). Для быстрой проверки достаточно любого
+статического HTTP-сервера:
 
 ```bash
 # 1) «сервер»: папка с version.json / manifest.json / files/...

@@ -1,10 +1,10 @@
-# Задача 3: Серверная часть — VPS (Debian 12, Docker, Nginx, SFTP)
+# Серверная часть — VPS (Debian 12, Docker, Nginx, SFTP)
 
 Подготовка **VPS на Debian 12 x64** для автообновления игрового клиента:
 
 - **Nginx в Docker** (`fileserver`) отдаёт статику по HTTPS: `version.json`, `manifest.json`, `files/*`;
-- **OpenSSH SFTP** (порт 22) принимает заливку от Exporter (`Task_1_Exporter.md`);
-- **Launcher** (`Task_2_Launcher.md`) скачивает файлы по HTTPS.
+- **OpenSSH SFTP** (порт 22) принимает заливку от Exporter (см. корневой README, `../README.md`);
+- **Launcher** (см. `GameUpdater/src/GameUpdater.Launcher/README.md`) скачивает файлы по HTTPS.
 
 Ограничения сервера: **750 МБ RAM, 1 ядро CPU, SSD**. Запрещены БД и панели управления —
 только Nginx в Docker + SFTP (OpenSSH).
@@ -16,14 +16,14 @@
 | `setup-vps.sh` | Скрипт первичной настройки Debian 12: система, пользователи, SSH, UFW, Docker, Nginx, certbot. **Идемпотентен**, самодостаточен (все конфиги встроены) |
 | `nginx.conf` | Эталонная копия конфига, который скрипт ставит в `/etc/nginx/conf.d/fileserver.conf` (для домена `files.example.com`) |
 | `sshd_config_snippet` | Эталонная копия фрагмента sshd, который скрипт ставит в `/etc/ssh/sshd_config.d/10-gamefiles.conf` |
-| `local-test.sh` | Локальный сценарий тестирования: Nginx в Docker на localhost + тестовая сборка (Этап 6) |
+| `local-test.sh` | Локальный сценарий тестирования: Nginx в Docker на localhost + тестовая сборка |
 
 ## Архитектура
 
 ```text
                     SFTP :22 (ключи, chroot)                 HTTPS :443 / HTTP :80
  Exporter ──────────────────────────────► sshd ─┐            ▲
- (Task 1: files → manifest.json → version.json)   │           │
+ files → manifest.json → version.json             │           │
                                                   ▼           │
                                     /srv/gamefiles/          │
                                     ├── www/ ◄── запись      │
@@ -38,7 +38,7 @@
                                    nginx:alpine ◄─────────────┘
                                                   ▲
                                                   │ GET /version.json, /manifest.json, /files/*
-                                            Launcher (Task 2)
+                                            Launcher
 ```
 
 ## Структура каталогов на сервере (важно!)
@@ -57,8 +57,8 @@
 > **Почему `www/`, а не файлы прямо в `/srv/gamefiles`?**
 > OpenSSH требует, чтобы `ChrootDirectory` и все его родители принадлежали **root**
 > и не были записываемыми — иначе sshd откажется chroot'ить пользователя. Поэтому
-> (по «стандартному паттерну» из условия задачи) `/srv/gamefiles` — chroot-корень,
-> а запись идёт в подпапку `www/` внутри него. Отсюда два практических следствия:
+> `/srv/gamefiles` — chroot-корень, а запись идёт в подпапку `www/` внутри него.
+> Отсюда два практических следствия:
 >
 > 1. Nginx монтирует **`/srv/gamefiles/www`** (а не `/srv/gamefiles`) как read-only volume;
 >    URL-схема при этом не меняется: `https://files.example.com/version.json`, `/manifest.json`, `/files/<путь>`.
@@ -188,8 +188,9 @@ sftp> cd ..         # не выйдет выше: «/» здесь и есть /
 }
 ```
 
-> В примере из `GameUpdater/README.md` стоит `remoteBasePath: "/srv/gamefiles"` — это путь
-> *на диске*. Для chroot-сервера Exporter должен использовать путь **внутри chroot**: `/www`.
+> В примере из корневого README (`../README.md`) и в поставляемом `exporter.json` стоит
+> `remoteBasePath: "/srv/gamefiles"` — это путь *на диске*. Для chroot-сервера Exporter
+> должен использовать путь **внутри chroot**: `/www`.
 
 Заливка (из папки решения GameUpdater):
 
@@ -271,7 +272,7 @@ docker ps --filter name=fileserver   # → Up, restart policy unless-stopped
 
 ## Локальное тестирование (Docker на localhost)
 
-Полный сценарий Этапа 6 без VPS: тот же образ `nginx:alpine`, HTTP без TLS
+Полный локальный сценарий без VPS: тот же образ `nginx:alpine`, HTTP без TLS
 (TLS проверяется чек-листом выше на реальном сервере), та же политика кэширования.
 
 ```bash
@@ -304,7 +305,7 @@ cd server
 
 ## Эксплуатация
 
-| Задача | Команда |
+| Операция | Команда |
 |---|---|
 | Логи Nginx (access/error) | `docker logs --tail 100 fileserver` |
 | Логи SSH/SFTP | `journalctl -u ssh -f` |
@@ -323,13 +324,4 @@ cd server
 | Потеряли приватный ключ локально | Если есть доступ root на VPS — возьмите с сервера: `sudo cat /root/exporter-sftp-key` (SFTP) или `sudo cat /root/.ssh/id_ed25519` (админский). Без доступа root — создайте новую пару, уберите старый публичный ключ из `authorized_keys`, добавьте новый и перезапустите `setup-vps.sh` |
 | sshd пишет `chroot directory ... is not owned by root` | Кто-то изменил владельца/права `/srv/gamefiles` — верните `root:root 755` (`setup-vps.sh` делает это автоматически) |
 | Launcher скачивает файл, но MD5 не сходится | Запущен в первые ~5 с после деплоя (окно `open_file_cache_valid`) — ретраи Launcher это перекрывают; если повторяется систематически — проверьте, что заливка завершена (version.json обновлён) |
-| 403 на `/` по HTTPS | Нормально: index-файла нет, листинг каталогов выключен. Нужны только точные URL из манифеста |
-
-## Чек-лист приёмки (Task 3)
-
-- [x] `setup-vps.sh` идемпотентен и разворачивает всё с нуля на чистом Debian 12 x64
-- [x] Nginx в Docker отдаёт статику по HTTPS (Let's Encrypt, webroot через контейнер)
-- [x] Политики кэширования соответствуют таблице (no-cache для метаданных, immutable для `files/*`, gzip не применяется к `.zip/.pak/.gz`)
-- [x] SFTP chroot для exporter работает; запись возможна только в `/srv/gamefiles/www`
-- [x] README: домен/DNS → setup-vps.sh → ключи → первый деплой через Exporter
-- [x] Локальный сценарий тестирования (Docker на localhost) описан и воспроизводим (`local-test.sh`)
+ | 403 на `/` по HTTPS | Нормально: index-файла нет, листинг каталогов выключен. Нужны только точные URL из манифеста |
