@@ -285,7 +285,11 @@ public static class SftpClientWrapper
     private static (string Exe, bool PasswordMode) PrepareAuth(SftpOptions options)
     {
         if (!string.IsNullOrWhiteSpace(options.KeyPath))
+        {
+            if (!File.Exists(options.KeyPath))
+                throw new FileNotFoundException($"SFTP key file not found: {options.KeyPath}");
             return (ResolveSftpExecutable(), false);
+        }
 
         var password = Environment.GetEnvironmentVariable("SFTP_PASSWORD");
         if (string.IsNullOrEmpty(password))

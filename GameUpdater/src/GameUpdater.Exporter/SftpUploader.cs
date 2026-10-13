@@ -158,9 +158,13 @@ public sealed class SftpUploader
             return;
         }
 
-        AnsiConsole.Warn(
-            $"Batch upload aborted at file #{Math.Max(1, lastStartedIndex + 1)}/{files.Count} " +
-            $"({FirstLine(result.StdErrTail)}); resuming per-file with retries.");
+        if (lastStartedIndex >= 0)
+            AnsiConsole.Warn(
+                $"Batch upload aborted at file #{lastStartedIndex + 1}/{files.Count} " +
+                $"(files/{files[lastStartedIndex].Path}); resuming per-file with retries.");
+        else
+            AnsiConsole.Warn(
+                $"Batch upload failed before any file started ({FirstLine(result.StdErrTail)}); retrying per-file.");
 
         for (var i = Math.Max(0, lastStartedIndex); i < files.Count; i++)
             await UploadOneFileAsync(rootDir, files[i], i + 1, files.Count, totalBytes, state, sw, ct)
@@ -229,9 +233,15 @@ public sealed class SftpUploader
 
         AddAncestors(baseDir); // base dir holds manifest.json / version.json
         foreach (var file in files)
-            AddAncestors(RemotePath("files/" + file.Path));
+            AddAncestors(ParentDirectory(RemotePath("files/" + file.Path)));
 
         return dirs.OrderBy(d => d.Count(c => c == '/')).ThenBy(d => d, StringComparer.Ordinal).ToList();
+    }
+
+    private static string ParentDirectory(string unixPath)
+    {
+        var slash = unixPath.LastIndexOf('/');
+        return slash <= 0 ? "/" : unixPath[..slash];
     }
 
     private void ReportProgress(State state, int doneFiles, int totalFiles, long totalBytes, Stopwatch sw, string label)
