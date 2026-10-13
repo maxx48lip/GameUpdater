@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using GameUpdater.Exporter;
 using GameUpdater.Shared;
@@ -17,6 +18,10 @@ internal static class Program
 
     private static async Task<int> Main(string[] args)
     {
+        // Consistent output regardless of host locale (decimal point, etc.).
+        CultureInfo.DefaultThreadCurrentCulture = CultureInfo.InvariantCulture;
+        CultureInfo.DefaultThreadCurrentUICulture = CultureInfo.InvariantCulture;
+
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) =>
         {
@@ -93,9 +98,8 @@ internal static class Program
         AnsiConsole.Info($"Scanning {options.Path}...");
         var swScan = Stopwatch.StartNew();
 
-        var ignorePatterns = new List<string>(ManifestBuilder.BuiltInIgnorePatterns);
-        if (config is not null)
-            ignorePatterns.AddRange(config.IgnorePatterns);
+        // Built-in OS junk patterns are applied by ManifestBuilder automatically.
+        var ignorePatterns = new List<string>(config?.IgnorePatterns ?? Enumerable.Empty<string>());
 
         var progress = new Progress<(int Done, int Total, long BytesDone)>(p =>
             AnsiConsole.Progress(p.Done * 100 / Math.Max(1, p.Total), $"{p.Done}/{p.Total} | scanning"));

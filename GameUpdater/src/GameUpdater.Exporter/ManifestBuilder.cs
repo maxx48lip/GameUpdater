@@ -33,7 +33,8 @@ public static class ManifestBuilder
     /// </summary>
     public static List<ScannedFile> Scan(string rootDir, IEnumerable<string> ignorePatterns, bool verbose)
     {
-        var matcher = new IgnoreMatcher(ignorePatterns);
+        // Built-in OS junk is always ignored, in addition to the caller's patterns.
+        var matcher = new IgnoreMatcher(BuiltInIgnorePatterns.Concat(ignorePatterns));
         var results = new List<ScannedFile>();
 
         void Walk(string dir)
