@@ -1,0 +1,10 @@
+{
+  "serverUrl": "https://files.example.com",
+  "gameFolder": "./game",
+  "executable": "client.exe",
+  "excludeFromDelete": [
+    "local_version.json",
+    "user.cfg",
+    "logs/*"
+  ]
+}

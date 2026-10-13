@@ -7,59 +7,24 @@ using GameUpdater.Shared.Models;
 
 internal static class Program
 {
-    private static int _passed;
-    private static readonly List<string> Failures = new();
-
-    // ------------------------------------------------------------- asserts
-
-    private static void AssertTrue(bool condition, string name)
-    {
-        if (condition)
-        {
-            _passed++;
-            Console.WriteLine($"  PASS  {name}");
-        }
-        else
-        {
-            Failures.Add(name);
-            Console.WriteLine($"  FAIL  {name}");
-        }
-    }
-
-    private static void AssertEqual<T>(T expected, T actual, string name)
-    {
-        if (EqualityComparer<T>.Default.Equals(expected, actual))
-        {
-            _passed++;
-            Console.WriteLine($"  PASS  {name}");
-        }
-        else
-        {
-            Failures.Add($"{name} — expected [{expected}], got [{actual}]");
-            Console.WriteLine($"  FAIL  {name} — expected [{expected}], got [{actual}]");
-        }
-    }
-
-    private static void AssertSequenceEqual(IEnumerable<string> expected, IEnumerable<string> actual, string name) =>
-        AssertEqual(string.Join(" | ", expected), string.Join(" | ", actual), name);
-
     // --------------------------------------------------------------- main
 
     private static async Task<int> Main()
     {
-        Console.WriteLine("GameUpdater.Tests — ManifestBuilder / Shared (no NuGet)\n");
+        Console.WriteLine("GameUpdater.Tests — ManifestBuilder / Shared / UpdateChecker (no NuGet)\n");
 
         await TestScanAndIgnorePatternsAsync();
         await TestSortingAndUnixPathsAsync();
         await TestMd5KnownVectorsAsync();
         await TestManifestJsonShapeAsync();
         TestPathNormalizer();
+        await UpdateCheckerTests.RunAsync();
 
-        Console.WriteLine($"\nResult: {_passed} passed, {Failures.Count} failed.");
-        foreach (var failure in Failures)
+        Console.WriteLine($"\nResult: {TestAsserts.Passed} passed, {TestAsserts.Failures.Count} failed.");
+        foreach (var failure in TestAsserts.Failures)
             Console.WriteLine($"  FAILED: {failure}");
 
-        return Failures.Count == 0 ? 0 : 1;
+        return TestAsserts.Failures.Count == 0 ? 0 : 1;
     }
 
     // --------------------------------------------------------------- tests
@@ -85,7 +50,7 @@ internal static class Program
             var manifest = await ManifestBuilder.BuildAsync(
                 root, "9.9.9", patterns, progress: null, verbose: false, CancellationToken.None);
 
-            AssertSequenceEqual(
+            TestAsserts.SequenceEqual(
                 new[] { "client.exe", "data/level1.pak", "data/level2.pak", "sub/nested/deep.txt" },
                 manifest.Files.Select(f => f.Path),
                 "scan applies ignore patterns (files and directories)");
@@ -111,12 +76,12 @@ internal static class Program
             var manifest = await ManifestBuilder.BuildAsync(
                 root, "1.2.3", Array.Empty<string>(), progress: null, verbose: false, CancellationToken.None);
 
-            AssertSequenceEqual(
+            TestAsserts.SequenceEqual(
                 new[] { "alpha.bin", "mid/beta.bin", "mid/gamma.bin", "zeta.bin" },
                 manifest.Files.Select(f => f.Path),
                 "manifest entries sorted by path (ordinal)");
 
-            AssertTrue(manifest.Files.All(f => !f.Path.Contains('\\')),
+            TestAsserts.True(manifest.Files.All(f => !f.Path.Contains('\\')),
                 "all manifest paths use forward slashes");
         }
         finally
@@ -133,14 +98,14 @@ internal static class Program
         {
             var emptyPath = Path.Combine(root, "empty.bin");
             File.WriteAllBytes(emptyPath, Array.Empty<byte>());
-            AssertEqual(
+            TestAsserts.Equal(
                 "d41d8cd98f00b204e9800998ecf8427e",
                 await HashCalculator.ComputeMd5Async(emptyPath),
                 "MD5 of empty file");
 
             var abcPath = Path.Combine(root, "abc.txt");
             File.WriteAllBytes(abcPath, System.Text.Encoding.ASCII.GetBytes("abc"));
-            AssertEqual(
+            TestAsserts.Equal(
                 "900150983cd24fb0d6963f7d28e17f72",
                 await HashCalculator.ComputeMd5Async(abcPath),
                 "MD5 of 'abc'");
@@ -154,7 +119,7 @@ internal static class Program
                     await stream.WriteAsync(chunk);
             }
             var bigHash = await HashCalculator.ComputeMd5Async(bigPath);
-            AssertEqual(32, bigHash.Length, "MD5 hex length is 32");
+            TestAsserts.Equal(32, bigHash.Length, "MD5 hex length is 32");
         }
         finally
         {
@@ -178,22 +143,22 @@ internal static class Program
             using var doc = JsonDocument.Parse(json);
             var rootEl = doc.RootElement;
 
-            AssertEqual("1.0.5", rootEl.GetProperty("version").GetString(), "json: version");
-            AssertEqual("MD5", rootEl.GetProperty("algorithm").GetString(), "json: algorithm == MD5");
+            TestAsserts.Equal("1.0.5", rootEl.GetProperty("version").GetString(), "json: version");
+            TestAsserts.Equal("MD5", rootEl.GetProperty("algorithm").GetString(), "json: algorithm == MD5");
 
             var files = rootEl.GetProperty("files").EnumerateArray().ToList();
-            AssertEqual(2, files.Count, "json: files count");
+            TestAsserts.Equal(2, files.Count, "json: files count");
             foreach (var file in files)
             {
-                AssertTrue(file.TryGetProperty("path", out _) && file.TryGetProperty("hash", out _) &&
+                TestAsserts.True(file.TryGetProperty("path", out _) && file.TryGetProperty("hash", out _) &&
                            file.TryGetProperty("size", out _),
                     $"json: entry has path/hash/size ({file.GetProperty("path").GetString()})");
             }
 
             var versionInfo = new VersionInfo { Version = "1.0.5", BuildDate = "2026-10-13T12:00:00Z" };
             using var vdoc = JsonDocument.Parse(JsonSerializer.Serialize(versionInfo));
-            AssertEqual("1.0.5", vdoc.RootElement.GetProperty("version").GetString(), "json: versionInfo.version");
-            AssertEqual("1.0.0", vdoc.RootElement.GetProperty("minLauncherVersion").GetString(),
+            TestAsserts.Equal("1.0.5", vdoc.RootElement.GetProperty("version").GetString(), "json: versionInfo.version");
+            TestAsserts.Equal("1.0.0", vdoc.RootElement.GetProperty("minLauncherVersion").GetString(),
                 "json: versionInfo.minLauncherVersion default");
         }
         finally
@@ -205,11 +170,11 @@ internal static class Program
     private static void TestPathNormalizer()
     {
         Console.WriteLine("TestPathNormalizer:");
-        AssertEqual("a/b/c", PathNormalizer.ToUnix(@"a\b\c"), "ToUnix converts backslashes");
-        AssertEqual("a/b/c", PathNormalizer.ToUnix("a/b/c"), "ToUnix keeps forward slashes");
+        TestAsserts.Equal("a/b/c", PathNormalizer.ToUnix(@"a\b\c"), "ToUnix converts backslashes");
+        TestAsserts.Equal("a/b/c", PathNormalizer.ToUnix("a/b/c"), "ToUnix keeps forward slashes");
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        AssertTrue(PathNormalizer.ExpandHome("~/key").StartsWith(home), "ExpandHome expands ~ to profile dir");
+        TestAsserts.True(PathNormalizer.ExpandHome("~/key").StartsWith(home), "ExpandHome expands ~ to profile dir");
     }
 
     // ------------------------------------------------------------- helpers

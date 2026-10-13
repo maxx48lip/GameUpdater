@@ -12,4 +12,9 @@
     <ProjectReference Include="..\GameUpdater.Shared\GameUpdater.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Sample config is copied next to the exe so a fresh build runs out of the box. -->
+    <None Update="launcher.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

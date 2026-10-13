@@ -1,7 +1,7 @@
 # GameUpdater
 
 Система обновления игры: **Exporter** (сборка → манифест → заливка по SFTP), **Launcher**
-(заглушка, Задача 2) и общий модуль **Shared**.
+(проверка версии, докачка файлов, запуск игры) и общий модуль **Shared**.
 
 - Платформа: **.NET 10 (LTS)**, консольные приложения.
 - **Никаких NuGet-пакетов** — только shared framework (`System.Text.Json`,
@@ -29,7 +29,14 @@ GameUpdater/
     │   ├── ManifestBuilder.cs     # обход папки, ignorePatterns, MD5, сортировка
     │   ├── SftpUploader.cs        # заливка: files → manifest.json → version.json
     │   └── exporter.json          # пример конфигурации
-    ├── GameUpdater.Launcher/      # Console, net10.0 (заглушка — Задача 2)
+    ├── GameUpdater.Launcher/      # Console, net10.0 (бинарь: launcher)
+    │   ├── Program.cs             # точка входа: конфиг → версия → манифест → диф → скачивание → запуск
+    │   ├── CliOptions.cs          # парсинг CLI + usage
+    │   ├── LauncherConfig.cs      # модель launcher.json
+    │   ├── UpdateChecker.cs       # версии, диф по манифесту (размер/MD5), excludeFromDelete
+    │   ├── FileDownloader.cs      # 3 потока, .tmp + атомарный Move, ретраи, проверка хеша
+    │   ├── GameLauncher.cs        # запуск игры: Windows / Linux (chmod +x) / macOS (.app)
+    │   └── launcher.json          # пример конфигурации
     └── GameUpdater.Tests/         # Console-тесты без NuGet (свои Assert)
 ```
 
@@ -137,6 +144,44 @@ export SFTP_PASSWORD='...'   # и уберите sftpKeyPath из конфига
   (sftp `-b` прерывается на первой ошибке) оставшиеся файлы автоматически
   догружаются пофайлово с ретраями.
 
+## Использование Launcher
+
+```bash
+launcher [--config <file>] [options]
+```
+
+| Аргумент | Обязательный | Описание |
+|---|---|---|
+| `--config <file>` | нет | Конфиг (по умолчанию `launcher.json` рядом с exe) |
+| `--no-launch` | нет | Только обновление, без запуска игры |
+| `--no-color` | нет | Отключить ANSI-цвета |
+| `-h`, `--help` | нет | Справка |
+
+Коды выхода: `0` — успех, `1` — ошибка выполнения, `2` — ошибка аргументов, `130` — отмена (Ctrl+C).
+
+### Конфигурация (launcher.json)
+
+```json
+{
+  "serverUrl": "https://files.example.com",
+  "gameFolder": "./game",
+  "executable": "client.exe",
+  "excludeFromDelete": ["local_version.json", "user.cfg", "logs/*"]
+}
+```
+
+| Поле | Описание |
+|---|---|
+| `serverUrl` | Базовый URL сервера (http/https): `{serverUrl}/version.json`, `/manifest.json`, `/files/<путь>` |
+| `gameFolder` | Папка с игрой (относительный путь — от CWD, `~` раскрывается); создаётся автоматически |
+| `executable` | Исполняемый файл игры относительно `gameFolder`; на macOS может быть `.app`-бандлом |
+| `excludeFromDelete` | Что не удалять при очистке: точное имя файла, имя каталога (всё дерево) или глобы (`*`, `?`, `**`). `local_version.json` исключается всегда |
+
+Алгоритм: версия → совпадают? запуск игры : манифест → диф (нет файла / размер / MD5) →
+параллельное скачивание 3 потоками во `.tmp` с проверкой хеша и атомарным Move (ретраи до 3 раз)
+→ удаление лишних файлов → запись `local_version.json` → запуск игры.
+Ctrl+C — отмена, удаление `.tmp`, код выхода 130. Подробности: `src/GameUpdater.Launcher/README.md`.
+
 ## Форматы манифестов
 
 `manifest.json`:
@@ -193,7 +238,9 @@ dotnet run --project src/GameUpdater.Tests
 
 Тесты без NuGet (собственные Assert-функции): обход папки, ignorePatterns
 (файлы и каталоги), сортировка путей, unix-формат путей в манифесте, MD5 по
-известным векторам, форма JSON (`version`/`algorithm`/`files`, `path`/`hash`/`size`).
+известным векторам, форма JSON (`version`/`algorithm`/`files`, `path`/`hash`/`size`),
+диф Launcher (`UpdateChecker`: нет файла / размер отличается / хеш не совпал, список на
+удаление с учётом `excludeFromDelete`).
 
 Ручная проверка: `--dry-run` и `--skip-upload` на локальной папке; сверка хешей
 с `md5sum` (Linux) или `md5 -r` (macOS).

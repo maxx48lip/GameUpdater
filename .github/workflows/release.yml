@@ -25,20 +25,24 @@ jobs:
       - name: Run tests
         run: dotnet run --project GameUpdater/src/GameUpdater.Tests -c Release --no-build
 
-      # Self-contained publish for all target platforms from a single Linux runner.
-      - name: Publish self-contained binaries (all RIDs)
+      # Self-contained publish from a single Linux runner. Only the RIDs shipped as releases.
+      - name: Publish self-contained binaries (win-x64, osx-arm64)
         run: |
-          for rid in win-x64 linux-x64 linux-arm64 osx-x64 osx-arm64; do
+          for rid in win-x64 osx-arm64; do
             dotnet publish GameUpdater/src/GameUpdater.Exporter \
               -c Release -r "$rid" --self-contained true --nologo \
-              -o "publish/$rid"
+              -o "publish/exporter/$rid"
+            dotnet publish GameUpdater/src/GameUpdater.Launcher \
+              -c Release -r "$rid" --self-contained true --nologo \
+              -o "publish/launcher/$rid"
           done
 
       - name: Package release assets
         run: |
           mkdir -p release-assets
-          for rid in win-x64 linux-x64 linux-arm64 osx-x64 osx-arm64; do
-            (cd "publish/$rid" && zip -qr "../../release-assets/gameup-exporter-$rid.zip" .)
+          for rid in win-x64 osx-arm64; do
+            (cd "publish/exporter/$rid" && zip -qr "../../../release-assets/gameup-exporter-$rid.zip" .)
+            (cd "publish/launcher/$rid" && zip -qr "../../../release-assets/gameup-launcher-$rid.zip" .)
           done
           (cd release-assets && sha256sum *.zip > SHA256SUMS.txt)
 
@@ -49,7 +53,7 @@ jobs:
         run: |
           TAG="v$(date -u +%Y.%m.%d)-${GITHUB_SHA::7}"
           gh release create "$TAG" \
-            --title "GameUpdater Exporter $TAG" \
+            --title "GameUpdater Exporter + Launcher $TAG" \
             --prerelease \
             --generate-notes \
             release-assets/*.zip release-assets/SHA256SUMS.txt

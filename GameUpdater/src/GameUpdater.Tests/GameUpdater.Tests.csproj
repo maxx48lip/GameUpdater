@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\GameUpdater.Shared\GameUpdater.Shared.csproj" />
     <ProjectReference Include="..\GameUpdater.Exporter\GameUpdater.Exporter.csproj" />
+    <ProjectReference Include="..\GameUpdater.Launcher\GameUpdater.Launcher.csproj" />
   </ItemGroup>
 
 </Project>
