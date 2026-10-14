@@ -19,6 +19,7 @@ internal static class Program
         await TestManifestJsonShapeAsync();
         TestPathNormalizer();
         TestWikiDelta();
+        TestCliOptions();
         await UpdateCheckerTests.RunAsync();
 
         Console.WriteLine($"\nResult: {TestAsserts.Passed} passed, {TestAsserts.Failures.Count} failed.");
@@ -217,6 +218,27 @@ internal static class Program
             M(("a.html", "h1"), ("old/d.html", "h4")));
         TestAsserts.SequenceEqual(new[] { "new/c.html" }, mixed.ToUpload.Select(f => f.Path), "added file to upload");
         TestAsserts.SequenceEqual(new[] { "old/d.html" }, mixed.StalePaths, "removed file is stale");
+    }
+
+    private static void TestCliOptions()
+    {
+        Console.WriteLine("TestCliOptions:");
+
+        var o = CliOptions.Parse(new[] { "--path", "build" });
+        TestAsserts.True(string.IsNullOrEmpty(o.Version), "version is optional at parse time");
+        TestAsserts.Equal("build", o.Path, "path parsed");
+
+        var none = CliOptions.Parse(Array.Empty<string>());
+        TestAsserts.True(string.IsNullOrEmpty(none.Version) && string.IsNullOrEmpty(none.Path),
+            "no args parses (resolved later from config / interactive prompt)");
+
+        bool threw = false;
+        try { CliOptions.Parse(new[] { "--version", "1.0" }); }
+        catch (UsageException) { threw = true; }
+        TestAsserts.True(threw, "invalid version format still rejected at parse time");
+
+        var flags = CliOptions.Parse(new[] { "--update-wiki", "--dry-run" });
+        TestAsserts.True(flags.UpdateWiki && flags.DryRun, "flags parsed without required args");
     }
 
     // ------------------------------------------------------------- helpers

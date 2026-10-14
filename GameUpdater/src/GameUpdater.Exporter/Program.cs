@@ -67,7 +67,6 @@ internal static class Program
         }
 
         AnsiConsole.Info($"Exporter v{AppVersion}");
-        AnsiConsole.Info($"Version: {options.Version}");
 
         // Config is required for upload; optional otherwise (dry-run works without it), except
         // when the build folder must be taken from "buildFolder" in the config.
@@ -97,13 +96,32 @@ internal static class Program
             throw new DirectoryNotFoundException($"Build folder not found: {buildPath}");
         var rootDir = Path.GetFullPath(buildPath);
 
+        // Version: from CLI, or interactively (the current server version.json is shown first).
+        ExporterConfig? versionSource = config;
+        if (versionSource is null && File.Exists("exporter.json"))
+        {
+            try
+            {
+                versionSource = ExporterConfig.Load("exporter.json"); // best effort, for the prompt only
+            }
+            catch (Exception)
+            {
+                // Unreadable default config — just prompt without server info.
+            }
+        }
+
+        var version = string.IsNullOrWhiteSpace(options.Version)
+            ? await ResolveVersionAsync(versionSource, ct).ConfigureAwait(false)
+            : options.Version;
+        AnsiConsole.Info($"Version: {version}");
+
         if (willUpload && config is not null)
         {
             config.ValidateForUpload();
             // Fail fast: the sftp client must exist before we spend time hashing.
             await SftpClientWrapper.FindSftpAsync(ct).ConfigureAwait(false);
-            if (SftpClientWrapper.SftpVersion is { Length: > 0 } version)
-                AnsiConsole.Info($"sftp client: {version}");
+            if (SftpClientWrapper.SftpVersion is { Length: > 0 } sftpVersion)
+                AnsiConsole.Info($"sftp client: {sftpVersion}");
         }
 
         // ------------------------------------------------ scan + hash
@@ -116,7 +134,7 @@ internal static class Program
         var progress = new Progress<(int Done, int Total, long BytesDone)>(p =>
             AnsiConsole.Progress(p.Done * 100 / Math.Max(1, p.Total), $"{p.Done}/{p.Total} | scanning"));
 
-        var manifest = await ManifestBuilder.BuildAsync(rootDir, options.Version, ignorePatterns, progress, options.Verbose, ct)
+        var manifest = await ManifestBuilder.BuildAsync(rootDir, version, ignorePatterns, progress, options.Verbose, ct)
             .ConfigureAwait(false);
         swScan.Stop();
         AnsiConsole.EndProgress();
@@ -150,7 +168,7 @@ internal static class Program
             var wikiProgress = new Progress<(int Done, int Total, long BytesDone)>(p =>
                 AnsiConsole.Progress(p.Done * 100 / Math.Max(1, p.Total), $"{p.Done}/{p.Total} | scanning wiki"));
             var wikiManifest = await ManifestBuilder.BuildAsync(
-                    wikiRootDir, options.Version, config.WikiIgnorePatterns ?? Enumerable.Empty<string>(),
+                    wikiRootDir, version, config.WikiIgnorePatterns ?? Enumerable.Empty<string>(),
                     wikiProgress, options.Verbose, ct)
                 .ConfigureAwait(false);
             AnsiConsole.EndProgress();
@@ -170,7 +188,7 @@ internal static class Program
 
         var versionInfo = new VersionInfo
         {
-            Version = options.Version,
+            Version = version,
             BuildDate = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss'Z'"),
             MinLauncherVersion = config?.MinLauncherVersion ?? "1.0.0",
         };
@@ -221,7 +239,7 @@ internal static class Program
 
             AnsiConsole.EndProgress();
             AnsiConsole.Ok($"Upload complete in {stats.Elapsed.TotalSeconds:F1}s");
-            AnsiConsole.Ok($"version.json updated to {options.Version}");
+            AnsiConsole.Ok($"version.json updated to {version}");
             PrintStats(stats.FileCount, stats.TotalBytes, swScan.Elapsed + stats.Elapsed);
         }
         finally
@@ -244,5 +262,113 @@ internal static class Program
         AnsiConsole.Info(
             $"Total: {fileCount} files, {ByteFormat.Format(totalBytes)}, " +
             $"elapsed {elapsed.TotalSeconds:F1}s");
+    }
+
+    /// <summary>
+    /// Interactive version selection: shows the current server version.json (when reachable) and
+    /// prompts until a valid dotted version is entered. Enter without input keeps the current one;
+    /// a piped stdin line works too, so this stays scriptable.
+    /// </summary>
+    private static async Task<string> ResolveVersionAsync(ExporterConfig? config, CancellationToken ct)
+    {
+        string current = string.Empty;
+
+        if (config is not null && !string.IsNullOrWhiteSpace(config.SftpHost) && !string.IsNullOrWhiteSpace(config.SftpUser))
+        {
+            var remotePath = config.RemoteBasePath.TrimEnd('/') + "/" + ManifestBuilder.VersionFileName;
+            var localTmp = Path.Combine(Path.GetTempPath(), "gameup-version-" + Guid.NewGuid().ToString("N") + ".json");
+
+            try
+            {
+                var (success, stderrTail) = await SftpClientWrapper.DownloadFileAsync(
+                        config.ToSftpOptions(), remotePath, localTmp, ct)
+                    .ConfigureAwait(false);
+
+                if (success)
+                {
+                    var content = await File.ReadAllTextAsync(localTmp, ct).ConfigureAwait(false);
+                    AnsiConsole.Info($"Current server version.json ({remotePath}):");
+                    Console.WriteLine(content.TrimEnd());
+
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(content);
+                        if (doc.RootElement.TryGetProperty("version", out var v))
+                            current = v.GetString() ?? string.Empty;
+                    }
+                    catch (JsonException)
+                    {
+                        AnsiConsole.Warn("Server version.json is not valid JSON — no default version.");
+                    }
+                }
+                else if (stderrTail.Contains("No such file", StringComparison.OrdinalIgnoreCase))
+                    AnsiConsole.Info($"Server has no version.json yet ({remotePath}) — this will be the first deploy.");
+                else
+                    AnsiConsole.Warn($"Could not read server version.json: {FirstLine(stderrTail)}");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                // Informational lookup only — any failure (no auth, unreachable host, …) must not
+                // block the run: the user can still type a version manually.
+                AnsiConsole.Warn($"Could not read server version.json: {FirstLine(ex.Message)}");
+            }
+            finally
+            {
+                try
+                {
+                    File.Delete(localTmp);
+                }
+                catch
+                {
+                    // Best effort cleanup.
+                }
+            }
+        }
+        else
+        {
+            AnsiConsole.Info("SFTP config is not available — cannot show the current server version.");
+        }
+
+        while (true)
+        {
+            var suffix = current.Length > 0 ? $" [{current}]" : string.Empty;
+            Console.Write($"Version to upload{suffix}: ");
+            var line = Console.ReadLine();
+            if (line is null)
+                throw new UsageException("No version entered (stdin closed). Pass --version <ver> instead.");
+
+            line = line.Trim().Trim('"');
+            if (line.Length == 0)
+            {
+                if (current.Length > 0)
+                    return current; // Enter → keep the server's current version
+                AnsiConsole.Warn("Enter a version, e.g. 1.0.5.");
+                continue;
+            }
+
+            if (!CliOptions.IsValidVersion(line))
+            {
+                AnsiConsole.Warn($"Invalid version '{line}' — expected a dotted number, e.g. 1.0.5.");
+                continue;
+            }
+
+            return line;
+        }
+    }
+
+    private static string FirstLine(string text)
+    {
+        foreach (var line in text.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length > 0)
+                return trimmed;
+        }
+
+        return "unknown error";
     }
 }

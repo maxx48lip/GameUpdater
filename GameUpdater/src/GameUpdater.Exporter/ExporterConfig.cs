@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using GameUpdater.Shared;
 
 namespace GameUpdater.Exporter;
 
@@ -61,6 +62,15 @@ public sealed class ExporterConfig
         PropertyNameCaseInsensitive = true,
         ReadCommentHandling = JsonCommentHandling.Skip,
         AllowTrailingCommas = true,
+    };
+
+    /// <summary>SFTP connection options derived from this config ("~" in the key path is expanded).</summary>
+    public SftpOptions ToSftpOptions() => new()
+    {
+        Host = SftpHost,
+        Port = SftpPort,
+        User = SftpUser,
+        KeyPath = string.IsNullOrWhiteSpace(SftpKeyPath) ? null : PathNormalizer.ExpandHome(SftpKeyPath),
     };
 
     public static ExporterConfig Load(string path)

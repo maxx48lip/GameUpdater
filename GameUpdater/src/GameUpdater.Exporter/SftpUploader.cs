@@ -35,15 +35,7 @@ public sealed class SftpUploader
     public SftpUploader(ExporterConfig config)
     {
         _config = config;
-        _options = new SftpOptions
-        {
-            Host = config.SftpHost,
-            Port = config.SftpPort,
-            User = config.SftpUser,
-            KeyPath = string.IsNullOrWhiteSpace(config.SftpKeyPath)
-                ? null
-                : PathNormalizer.ExpandHome(config.SftpKeyPath),
-        };
+        _options = config.ToSftpOptions();
         _maxRetries = Math.Max(1, config.MaxRetries);
     }
 

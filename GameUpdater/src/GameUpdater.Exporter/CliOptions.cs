@@ -63,13 +63,13 @@ public sealed class CliOptions
             }
         }
 
-        if (string.IsNullOrWhiteSpace(options.Version))
-            throw new UsageException("--version is required.");
-        if (!IsValidVersion(options.Version))
+        if (!string.IsNullOrWhiteSpace(options.Version) && !IsValidVersion(options.Version))
             throw new UsageException(
                 $"Invalid version '{options.Version}' — expected a dotted number, e.g. 1.0.5.");
 
-        // --path is optional: the build folder may come from "buildFolder" in the config file.
+        // --version and --path are optional: the version may be entered interactively (the current
+        // server version.json is shown first) and the build folder may come from "buildFolder" in
+        // the config file.
         return options;
     }
 
@@ -80,7 +80,7 @@ public sealed class CliOptions
         return args[++i];
     }
 
-    private static bool IsValidVersion(string version) =>
+    public static bool IsValidVersion(string version) =>
         Regex.IsMatch(version, @"^\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$");
 
     public static void PrintUsage()
@@ -90,12 +90,12 @@ public sealed class CliOptions
             GameUpdater.Exporter — build → manifest.json/version.json → SFTP upload
 
             Usage:
-              exporter --version <ver> [--path <buildDir>] [--config <file>] [options]
-
-            Required:
-              --version <ver>     Version string, e.g. 1.0.5
+              exporter [--version <ver>] [--path <buildDir>] [--config <file>] [options]
 
             Options:
+              --version <ver>     Version string, e.g. 1.0.5. If omitted: the current server
+                                  version.json is shown and you are prompted for a version
+                                  (Enter keeps the current one)
               --path <dir>        Path to the build folder (or "buildFolder" in config; CLI wins)
               --config <file>     Config file (default: ./exporter.json)
               --update-wiki       Update the wiki from "wikiFolder" in config (delta upload via
