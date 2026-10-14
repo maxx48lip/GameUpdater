@@ -22,14 +22,15 @@
 
 ```text
                     SFTP :22 (ключи, chroot)                 HTTPS :443 / HTTP :80
- Exporter ──────────────────────────────► sshd ─┐            ▲
- files → manifest.json → version.json             │           │
+  Exporter ──────────────────────────────► sshd ─┐            ▲
+  wiki/ → files → manifest.json → version.json   │           │
                                                   ▼           │
                                     /srv/gamefiles/          │
                                     ├── www/ ◄── запись      │
                                     │    ├── version.json    │
                                     │    ├── manifest.json   │
-                                    │    └── files/...       │
+                                    │    ├── files/...       │
+                                    │    └── wiki/...        │
                                     └── (chroot-корень, ro)  │
                                                   │           │
                                           bind mount :ro      │
@@ -52,7 +53,19 @@
     files/                     exporter         755
         client.exe             exporter         644
         data/level1.pak        exporter         644
+    wiki_manifest.json         exporter         644     ← path + size + MD5 файлов wiki (дельта-заливка)
+    wiki/                      exporter         755     ← статическая wiki (если задан "wikiFolder" в Exporter)
+        index.html             exporter         644     → https://<домен>/wiki/
+        pages/*.html           exporter         644
 ```
+
+> **Wiki:** содержимое папки из `"wikiFolder"` конфига Exporter заливается в `www/wiki/`
+> (sftp-путь `/www/wiki/...`) и отдаётся по адресу `https://<домен>/wiki/`. Wiki **не входит**
+> ни в `manifest.json`, ни в `version.json` — Launcher её не видит; это просто статика для браузера.
+> Ссылки внутри wiki относительные, поэтому перекрёстные переходы работают без изменений.
+> Обновляется только с флагом `--update-wiki` и **дельтой**: Exporter сравнивает MD5 из локального
+> сканирования с удалённым `wiki_manifest.json`, грузит лишь изменившиеся файлы, удаляет устаревшие
+> и публикует новый манифест последним (см. корневой README).
 
 > **Почему `www/`, а не файлы прямо в `/srv/gamefiles`?**
 > OpenSSH требует, чтобы `ChrootDirectory` и все его родители принадлежали **root**
@@ -193,7 +206,10 @@ sftp> cd ..         # не выйдет выше: «/» здесь и есть /
   "sftpUser": "exporter",
   "sftpKeyPath": "~/.ssh/id_ed25519",
   "remoteBasePath": "/www",
+  "buildFolder": "/path/to/build",
   "ignorePatterns": ["*.log", "*.pdb", "local_version.json", ".DS_Store"],
+  "wikiFolder": "/path/to/Wiki",
+  "wikiIgnorePatterns": ["md", "scripts/__pycache__"],
   "minLauncherVersion": "1.0.0",
   "uploadMode": "perFile",
   "maxRetries": 3
@@ -209,10 +225,19 @@ sftp> cd ..         # не выйдет выше: «/» здесь и есть /
 ```bash
 dotnet run --project src/GameUpdater.Exporter \
   -- --version 1.0.5 --path ./build --config exporter.json
+
+# + обновление wiki (дельта: только изменившиеся файлы, по MD5 из wiki_manifest.json)
+dotnet run --project src/GameUpdater.Exporter \
+  -- --version 1.0.5 --path ./build --config exporter.json --update-wiki
 ```
 
-Порядок заливки соблюдает сам Exporter: сначала все файлы в `files/`, затем `manifest.json`,
-последним — `version.json` (Launcher увидит новую версию только когда всё на месте).
+Если в конфиге задан `"buildFolder"`, аргумент `--path` можно опустить (CLI имеет приоритет).
+Без `--update-wiki` wiki на сервере не трогается вовсе.
+
+Порядок заливки соблюдает сам Exporter: сначала (если передан `--update-wiki`) статика wiki в
+`/www/wiki/` + новый `/www/wiki_manifest.json`, затем все файлы в `/www/files/`, затем
+`manifest.json`, последним — `version.json` (Launcher увидит новую версию только когда всё на
+месте). Wiki не попадает в игровой манифест и видна по адресу `https://<домен>/wiki/`.
 
 ### Шаг 5. Проверка (чек-лист сервера)
 
@@ -231,6 +256,11 @@ curl -sI https://files.example.com/files/client.exe | grep -iE 'cache-control|co
 
 curl -sI -H 'Accept-Encoding: gzip' https://files.example.com/files/data/level1.pak | grep -i content-encoding
 #    → пусто (gzip к .pak не применяется; то же для .zip/.gz)
+
+# 3b. Wiki (если задан "wikiFolder"): index отдаётся, страницы — no-cache (обновляются при заливке)
+curl -sI https://files.example.com/wiki/ | grep -iE '^HTTP|cache-control'
+#    → HTTP/2 200, Cache-Control: no-cache
+curl -s https://files.example.com/wiki/pages/<страница>.html   # перекрёстные ссылки работают
 
 # 4. SFTP: логин по ключу работает, shell недоступен
 sftp -i ~/exporter-key exporter@files.example.com        # заходит, видит www/
@@ -261,6 +291,7 @@ docker ps --filter name=fileserver   # → Up, restart policy unless-stopped
 | gzip | Только текстовые типы (`application/json`, `text/plain`, …) | `.zip`, `.pak`, `.gz` уже сжаты — их MIME-типы в `gzip_types` не входят, gzip к ним **не применяется** |
 | `/version.json`, `/manifest.json` | `Cache-Control: no-cache` | Метаданные всегда сверяются с сервером (Launcher запрашивает версию при каждом запуске) |
 | `/files/*` | `Cache-Control: public, max-age=31536000, immutable` | Файлы не перекачиваются повторно; целостность гарантирует MD5 из манифеста, а не HTTP-кэш |
+| `/wiki/*` | `Cache-Control: no-cache` | Страницы wiki меняются при каждой заливке — нельзя кэшировать «навсегда»; ревалидация по ETag дёшева (304) |
 
 ### Let's Encrypt и автопродление
 

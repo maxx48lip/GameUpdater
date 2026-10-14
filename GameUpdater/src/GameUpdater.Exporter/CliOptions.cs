@@ -16,6 +16,7 @@ public sealed class CliOptions
     public string Version { get; private set; } = string.Empty;
     public string Path { get; private set; } = string.Empty;
     public string? ConfigPath { get; private set; }
+    public bool UpdateWiki { get; private set; }
     public bool DryRun { get; private set; }
     public bool SkipUpload { get; private set; }
     public bool Verbose { get; private set; }
@@ -38,6 +39,9 @@ public sealed class CliOptions
                     break;
                 case "--config":
                     options.ConfigPath = NextValue(args, ref i, "--config");
+                    break;
+                case "--update-wiki":
+                    options.UpdateWiki = true;
                     break;
                 case "--dry-run":
                     options.DryRun = true;
@@ -64,9 +68,8 @@ public sealed class CliOptions
         if (!IsValidVersion(options.Version))
             throw new UsageException(
                 $"Invalid version '{options.Version}' — expected a dotted number, e.g. 1.0.5.");
-        if (string.IsNullOrWhiteSpace(options.Path))
-            throw new UsageException("--path is required.");
 
+        // --path is optional: the build folder may come from "buildFolder" in the config file.
         return options;
     }
 
@@ -87,14 +90,16 @@ public sealed class CliOptions
             GameUpdater.Exporter — build → manifest.json/version.json → SFTP upload
 
             Usage:
-              exporter --version <ver> --path <buildDir> [--config <file>] [options]
+              exporter --version <ver> [--path <buildDir>] [--config <file>] [options]
 
             Required:
               --version <ver>     Version string, e.g. 1.0.5
-              --path <dir>        Path to the build folder
 
             Options:
+              --path <dir>        Path to the build folder (or "buildFolder" in config; CLI wins)
               --config <file>     Config file (default: ./exporter.json)
+              --update-wiki       Update the wiki from "wikiFolder" in config (delta upload via
+                                  wiki_manifest.json); without this flag the wiki is not touched
               --dry-run           Generate manifest locally, do not upload
               --skip-upload       Recompute manifest locally, do not upload
               --verbose           Verbose logging

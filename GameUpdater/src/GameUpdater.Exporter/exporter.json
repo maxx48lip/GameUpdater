@@ -4,7 +4,10 @@
   "sftpUser": "exporter",
   "sftpKeyPath": "~/.ssh/id_ed25519",
   "remoteBasePath": "/srv/gamefiles",
+  "buildFolder": "/path/to/build",
   "ignorePatterns": [ "*.log", "*.pdb", "local_version.json", ".DS_Store" ],
+  "wikiFolder": "/path/to/wiki",
+  "wikiIgnorePatterns": [ ".git", "md", "scripts/__pycache__", "*.pyc" ],
   "minLauncherVersion": "1.0.0",
   "uploadMode": "perFile",
   "maxRetries": 3

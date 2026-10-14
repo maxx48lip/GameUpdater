@@ -185,12 +185,12 @@ else
 fi
 
 # Chroot-корень обязан принадлежать root и не быть записываемым никем (проверка OpenSSH).
-mkdir -p /srv/gamefiles/www/files
+mkdir -p /srv/gamefiles/www/files /srv/gamefiles/www/wiki
 chown root:root /srv /srv/gamefiles
 chmod 755 /srv /srv/gamefiles
-# Единственная записываемая область — web-корень Nginx.
-chown exporter:exporter /srv/gamefiles/www /srv/gamefiles/www/files
-chmod 755 /srv/gamefiles/www /srv/gamefiles/www/files
+# Единственная записываемая область — web-корень Nginx (wiki/ — статический сайт, см. nginx).
+chown exporter:exporter /srv/gamefiles/www /srv/gamefiles/www/files /srv/gamefiles/www/wiki
+chmod 755 /srv/gamefiles/www /srv/gamefiles/www/files /srv/gamefiles/www/wiki
 
 # Webroot для ACME HTTP-01 челленджей Let's Encrypt (отдаётся контейнером на :80).
 if [ "$NO_SSL" != "1" ]; then
@@ -353,6 +353,12 @@ emit_perf_and_cache() {
     # --- Игровые файлы: кэш навсегда (целостность проверяется по MD5 из манифеста)
     location /files/ {
         add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # --- Wiki: статический сайт в /wiki/ (лаунчеру не нужен). no-cache — страницы
+    #     меняются при каждой заливке; ревалидация по ETag дёшева (304).
+    location /wiki/ {
+        add_header Cache-Control "no-cache";
     }
 EOF
 }
@@ -537,6 +543,8 @@ cat <<EOF
  ${MODE_NOTE}
  SFTP:         exporter@${DOMAIN} (chroot /srv/gamefiles, запись в www/)
  Web-корень:   /srv/gamefiles/www → ${WEB_URL}/version.json и т.д.
+ Wiki:          ${WEB_URL}/wiki/ (статический сайт; обновляется Exporter'ом
+                с флагом --update-wiki, дельта по wiki_manifest.json)
 
  Дальше:
    1. Сохраните приватные ключи (созданные в этом запуске показаны выше):

@@ -176,6 +176,64 @@ public static class SftpClientWrapper
     }
 
     /// <summary>
+    /// Downloads a single remote file in its own sftp process ("-b" batch with one get), so the exit
+    /// code reliably reflects success/failure. A missing remote file reports "No such file" in stderr.
+    /// Returns (success, stderr tail).
+    /// </summary>
+    public static async Task<(bool Success, string StdErrTail)> DownloadFileAsync(
+        SftpOptions options, string remotePath, string localPath, CancellationToken ct)
+    {
+        var batch = MakeTempBatchFile(new[] { $"get {Quote(remotePath)} {Quote(PathNormalizer.ToUnix(localPath))}" });
+        try
+        {
+            var result = await RunSftpCoreAsync(options, batchFilePath: batch, stdinCommands: null, onStdErrLine: null, ct)
+                .ConfigureAwait(false);
+            return (result.Success, Tail(result.StdErr));
+        }
+        finally
+        {
+            TryDeleteFile(batch);
+        }
+    }
+
+    /// <summary>
+    /// Removes remote files via one sftp session (commands piped through stdin, no "-b", so a missing
+    /// file does not abort the session). Any other rm failure is fatal.
+    /// </summary>
+    public static async Task RemoveRemoteFilesAsync(
+        SftpOptions options, IReadOnlyCollection<string> files, CancellationToken ct)
+    {
+        if (files.Count == 0)
+            return;
+
+        var commands = new List<string>(files.Count + 1);
+        foreach (var file in files)
+            commands.Add($"rm {Quote(file)}");
+        commands.Add("bye");
+
+        var result = await RunSftpCoreAsync(options, batchFilePath: null, stdinCommands: commands, onStdErrLine: null, ct)
+            .ConfigureAwait(false);
+
+        // Scan for real rm failures. "No such file" is expected and harmless (already removed);
+        // a non-zero exit code alone is not proof of failure, so combine both signals.
+        var sawRmOutput = false;
+        foreach (var line in result.StdErr.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (!trimmed.StartsWith("rm:", StringComparison.Ordinal))
+                continue;
+            sawRmOutput = true;
+            if (!trimmed.Contains("No such file", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Remote file removal failed: {trimmed}");
+        }
+
+        if (!result.Success && !sawRmOutput)
+            throw new InvalidOperationException(
+                $"Could not connect to {options.User}@{options.Host}:{options.Port}: " +
+                FirstMeaningfulLine(result.StdErr));
+    }
+
+    /// <summary>
     /// Uploads all files in one sftp session ("-b" batch). onStdErrLine receives each stderr line live
     /// (used for progress and to locate the failed file when the batch aborts).
     /// </summary>

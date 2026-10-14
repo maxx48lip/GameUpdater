@@ -16,6 +16,9 @@ public static class ManifestBuilder
     public const string ManifestFileName = "manifest.json";
     public const string VersionFileName = "version.json";
 
+    /// <summary>Wiki delta manifest (path/size/MD5 per file), uploaded to &lt;remoteBase&gt;/wiki_manifest.json.</summary>
+    public const string WikiManifestFileName = "wiki_manifest.json";
+
     /// <summary>OS junk always ignored, in addition to config patterns.</summary>
     public static readonly IReadOnlyList<string> BuiltInIgnorePatterns = new[]
     {
@@ -72,8 +75,8 @@ public static class ManifestBuilder
             {
                 var rel = PathNormalizer.ToUnix(Path.GetRelativePath(rootDir, file));
 
-                // Generated artifacts at the build root are never part of a manifest.
-                if (rel == ManifestFileName || rel == VersionFileName)
+                // Generated artifacts at the scan root are never part of a manifest.
+                if (rel == ManifestFileName || rel == VersionFileName || rel == WikiManifestFileName)
                     continue;
                 if (matcher.IsIgnored(rel))
                     continue;

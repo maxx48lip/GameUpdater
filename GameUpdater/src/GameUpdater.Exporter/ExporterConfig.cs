@@ -33,6 +33,25 @@ public sealed class ExporterConfig
     [JsonPropertyName("uploadMode")]
     public string UploadMode { get; set; } = "perFile";
 
+    /// <summary>
+    /// Local path to the build folder, used when --path is not given on the command line.
+    /// CLI --path always wins over this value. Optional.
+    /// </summary>
+    [JsonPropertyName("buildFolder")]
+    public string? BuildFolder { get; set; }
+
+    /// <summary>
+    /// Local path to a static wiki folder. Its contents are uploaded to
+    /// &lt;remoteBasePath&gt;/wiki/ (served at https://&lt;host&gt;/wiki/) and are NOT part of the
+    /// game manifest — the launcher never sees them. Optional: null/empty → no wiki upload.
+    /// </summary>
+    [JsonPropertyName("wikiFolder")]
+    public string? WikiFolder { get; set; }
+
+    /// <summary>Glob patterns ignored when scanning the wiki folder (built-in OS junk is always skipped).</summary>
+    [JsonPropertyName("wikiIgnorePatterns")]
+    public List<string> WikiIgnorePatterns { get; set; } = new();
+
     /// <summary>Upload attempts per file before giving up.</summary>
     [JsonPropertyName("maxRetries")]
     public int MaxRetries { get; set; } = 3;

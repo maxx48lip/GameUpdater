@@ -69,14 +69,11 @@ internal static class Program
         AnsiConsole.Info($"Exporter v{AppVersion}");
         AnsiConsole.Info($"Version: {options.Version}");
 
-        if (!Directory.Exists(options.Path))
-            throw new DirectoryNotFoundException($"Build folder not found: {options.Path}");
-        var rootDir = Path.GetFullPath(options.Path);
-
-        // Config is required for upload; optional otherwise (dry-run works without it).
+        // Config is required for upload; optional otherwise (dry-run works without it), except
+        // when the build folder must be taken from "buildFolder" in the config.
         bool willUpload = !options.DryRun && !options.SkipUpload;
         ExporterConfig? config = null;
-        if (willUpload || options.ConfigPath is not null)
+        if (willUpload || options.ConfigPath is not null || string.IsNullOrWhiteSpace(options.Path))
         {
             var configPath = options.ConfigPath ?? "exporter.json";
             if (!File.Exists(configPath))
@@ -84,6 +81,21 @@ internal static class Program
                     $"Config file not found: {configPath} (pass --config <file> or create exporter.json).");
             config = ExporterConfig.Load(configPath);
         }
+
+        // Build folder: CLI --path wins, then "buildFolder" from the config.
+        var buildPath = options.Path;
+        if (string.IsNullOrWhiteSpace(buildPath))
+        {
+            if (config?.BuildFolder is { Length: > 0 } configured)
+                buildPath = configured;
+            else
+                throw new UsageException(
+                    "Build folder not specified: pass --path <dir> or set \"buildFolder\" in the config.");
+        }
+
+        if (!Directory.Exists(buildPath))
+            throw new DirectoryNotFoundException($"Build folder not found: {buildPath}");
+        var rootDir = Path.GetFullPath(buildPath);
 
         if (willUpload && config is not null)
         {
@@ -95,7 +107,7 @@ internal static class Program
         }
 
         // ------------------------------------------------ scan + hash
-        AnsiConsole.Info($"Scanning {options.Path}...");
+        AnsiConsole.Info($"Scanning {buildPath}...");
         var swScan = Stopwatch.StartNew();
 
         // Built-in OS junk patterns are applied by ManifestBuilder automatically.
@@ -112,6 +124,49 @@ internal static class Program
         long totalBytes = manifest.Files.Sum(f => f.Size);
         AnsiConsole.Info($"Found {manifest.Files.Count} files ({ByteFormat.Format(totalBytes)})");
         AnsiConsole.Info($"Manifest generated: {manifest.Files.Count} entries");
+
+        // Optional static wiki (config "wikiFolder"): only touched with --update-wiki. It never
+        // enters manifest.json/version.json — the launcher does not need it; what changed is tracked
+        // by a separate wiki_manifest.json on the server (delta upload). Served at /<prefix>/.
+        WikiUpload? wiki = null;
+        if (options.UpdateWiki)
+        {
+            if (config?.WikiFolder is not { Length: > 0 } wikiPath)
+                throw new UsageException("--update-wiki requires \"wikiFolder\" in the config file.");
+
+            if (!Directory.Exists(wikiPath))
+                throw new DirectoryNotFoundException($"Wiki folder not found: {wikiPath}");
+
+            var wikiRootDir = Path.GetFullPath(wikiPath);
+
+            // A nested wiki would end up in the manifest (as game files) AND in /wiki/.
+            if (wikiRootDir == rootDir
+                || wikiRootDir.StartsWith(rootDir + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || rootDir.StartsWith(wikiRootDir + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                throw new InvalidDataException(
+                    $"Wiki folder and build folder must not overlap: {wikiRootDir} vs {rootDir}.");
+
+            AnsiConsole.Info($"Scanning + hashing wiki {wikiPath}...");
+            var wikiProgress = new Progress<(int Done, int Total, long BytesDone)>(p =>
+                AnsiConsole.Progress(p.Done * 100 / Math.Max(1, p.Total), $"{p.Done}/{p.Total} | scanning wiki"));
+            var wikiManifest = await ManifestBuilder.BuildAsync(
+                    wikiRootDir, options.Version, config.WikiIgnorePatterns ?? Enumerable.Empty<string>(),
+                    wikiProgress, options.Verbose, ct)
+                .ConfigureAwait(false);
+            AnsiConsole.EndProgress();
+
+            long wikiBytes = wikiManifest.Files.Sum(f => f.Size);
+            AnsiConsole.Info(
+                $"Wiki: {wikiManifest.Files.Count} files ({ByteFormat.Format(wikiBytes)}) → " +
+                $"{config.RemoteBasePath.TrimEnd('/')}/{SftpUploader.WikiRemotePrefix}/ (delta upload)");
+
+            if (wikiManifest.Files.Count > 0)
+                wiki = new WikiUpload(wikiRootDir, wikiManifest);
+        }
+        else if (config?.WikiFolder is { Length: > 0 })
+        {
+            AnsiConsole.Info("Wiki not updated (no --update-wiki).");
+        }
 
         var versionInfo = new VersionInfo
         {
@@ -133,6 +188,15 @@ internal static class Program
 
             AnsiConsole.Ok($"Wrote {localManifest}");
             AnsiConsole.Ok($"Wrote {localVersion}");
+
+            if (wiki is not null)
+            {
+                var localWikiManifest = Path.Combine(rootDir, ManifestBuilder.WikiManifestFileName);
+                await File.WriteAllTextAsync(
+                    localWikiManifest, JsonSerializer.Serialize(wiki.Manifest, JsonOpts), ct).ConfigureAwait(false);
+                AnsiConsole.Ok($"Wrote {localWikiManifest}");
+            }
+
             if (options.DryRun)
                 AnsiConsole.Info("Dry run: no upload performed.");
             PrintStats(manifest.Files.Count, totalBytes, swScan.Elapsed);
@@ -152,7 +216,7 @@ internal static class Program
             await File.WriteAllTextAsync(localManifest, manifestJson, ct).ConfigureAwait(false);
             await File.WriteAllTextAsync(localVersion, versionJson, ct).ConfigureAwait(false);
 
-            var stats = await uploader.UploadAsync(rootDir, manifest, localManifest, localVersion, ct)
+            var stats = await uploader.UploadAsync(rootDir, manifest, localManifest, localVersion, wiki, ct)
                 .ConfigureAwait(false);
 
             AnsiConsole.EndProgress();

@@ -18,6 +18,7 @@ internal static class Program
         await TestMd5KnownVectorsAsync();
         await TestManifestJsonShapeAsync();
         TestPathNormalizer();
+        TestWikiDelta();
         await UpdateCheckerTests.RunAsync();
 
         Console.WriteLine($"\nResult: {TestAsserts.Passed} passed, {TestAsserts.Failures.Count} failed.");
@@ -175,6 +176,47 @@ internal static class Program
 
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         TestAsserts.True(PathNormalizer.ExpandHome("~/key").StartsWith(home), "ExpandHome expands ~ to profile dir");
+    }
+
+    private static void TestWikiDelta()
+    {
+        Console.WriteLine("TestWikiDelta:");
+
+        Manifest M(params (string Path, string Hash)[] files) => new()
+        {
+            Version = "1.0.0",
+            Algorithm = "MD5",
+            Files = files.Select(f => new FileEntry { Path = f.Path, Hash = f.Hash, Size = 1 }).ToList(),
+        };
+
+        // First run: no previous manifest → everything is uploaded, nothing is stale.
+        var local = M(("a.html", "h1"), ("pages/b.html", "h2"));
+        var first = WikiDelta.Compute(local, null);
+        TestAsserts.Equal(2, first.ToUpload.Count, "first run: all files to upload");
+        TestAsserts.True(first.StalePaths.Count == 0, "first run: no stale files");
+
+        // Identical manifests → nothing to do.
+        var same = WikiDelta.Compute(local, M(("a.html", "h1"), ("pages/b.html", "h2")));
+        TestAsserts.True(same.ToUpload.Count == 0, "unchanged: nothing to upload");
+        TestAsserts.True(same.StalePaths.Count == 0, "unchanged: no stale files");
+
+        // Hash changed → only that file is uploaded.
+        var changed = WikiDelta.Compute(
+            M(("a.html", "h1-new"), ("pages/b.html", "h2")),
+            M(("a.html", "h1"), ("pages/b.html", "h2")));
+        TestAsserts.SequenceEqual(new[] { "a.html" }, changed.ToUpload.Select(f => f.Path),
+            "changed hash: only that file to upload");
+
+        // Hash comparison is case-insensitive.
+        var caseDiff = WikiDelta.Compute(M(("a.html", "H1")), M(("a.html", "h1")));
+        TestAsserts.True(caseDiff.ToUpload.Count == 0, "hash compare ignores case");
+
+        // Added file → upload; removed file → stale.
+        var mixed = WikiDelta.Compute(
+            M(("a.html", "h1"), ("new/c.html", "h3")),
+            M(("a.html", "h1"), ("old/d.html", "h4")));
+        TestAsserts.SequenceEqual(new[] { "new/c.html" }, mixed.ToUpload.Select(f => f.Path), "added file to upload");
+        TestAsserts.SequenceEqual(new[] { "old/d.html" }, mixed.StalePaths, "removed file is stale");
     }
 
     // ------------------------------------------------------------- helpers

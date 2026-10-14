@@ -121,6 +121,10 @@ server {
     location /files/ {
         add_header Cache-Control "public, max-age=31536000, immutable";
     }
+
+    location /wiki/ {
+        add_header Cache-Control "no-cache";
+    }
 }
 EOF
 }
@@ -187,6 +191,16 @@ run_checks() {
   check ".pak не сжимается gzip (нет Content-Encoding: gzip)" \
     "$(printf '%s' "$h" | grep -qi '^content-encoding:[[:space:]]*gzip'; [ $? -ne 0 ]; echo $?)"
 
+  h="$(curl -sI "${base}/wiki/" || true)"
+  local wiki_code="$(printf '%s\n' "$h" | head -n1 | awk '{print $2}')"
+  check "GET /wiki/ → 200 (index.html)" $([ "$wiki_code" = "200" ]; echo $?)
+  check "/wiki/: Cache-Control: no-cache" \
+    "$(printf '%s' "$h" | grep -qi '^cache-control:[[:space:]]*no-cache'; echo $?)"
+
+  local wiki_page_code="$(curl -s -o /dev/null -w '%{http_code}' "${base}/wiki/pages/a.html" || true)"
+  check "GET /wiki/pages/a.html → 200 (относительная перекрёстная ссылка)" \
+    $([ "$wiki_page_code" = "200" ]; echo $?)
+
   local json_ok=1
   if curl -s "${base}/version.json" | grep -q '"version"'; then json_ok=0; fi
   check "version.json — валидный JSON с полем version" "$json_ok"
@@ -209,6 +223,17 @@ cmd_setup() {
   make_test_file "$WEBROOT/files/data/level1.pak" 300
   make_test_file "$WEBROOT/files/data/level2.pak" 150
   regenerate_manifest "0.0.1-local"
+
+  # Минимальная статическая wiki с относительными перекрёстными ссылками (как в /wiki/).
+  mkdir -p "$WEBROOT/wiki/pages"
+  cat > "$WEBROOT/wiki/index.html" <<'EOF'
+<!doctype html><html><head><title>Test Wiki</title></head>
+<body><a href="pages/a.html">page a</a></body></html>
+EOF
+  cat > "$WEBROOT/wiki/pages/a.html" <<'EOF'
+<!doctype html><html><head><title>Page A</title></head>
+<body><a href="../index.html">home</a></body></html>
+EOF
 
   write_local_nginx_conf
   start_container
