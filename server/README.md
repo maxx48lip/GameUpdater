@@ -99,14 +99,23 @@ dig +short files.example.com
 DOMAIN=files.example.com EMAIL=admin@example.com sudo ./setup-vps.sh
 ```
 
+Без SSL-сертификата (напр. за **Cloudflare Tunnel**, где TLS уже терминируется на стороне
+туннеля и у поддомена есть свой сертификат) — пропускаются certbot и Let's Encrypt, nginx
+отдаёт plain HTTP на `:80`:
+
+```bash
+NO_SSL=1 DOMAIN=files.example.com sudo ./setup-vps.sh
+```
+
 Ключи **не нужно передавать**: если `ROOT_PUBKEY`/`EXPORTER_PUBKEY` не заданы, скрипт сам
 создаёт пары ed25519 (если их ещё нет), ставит публичные части на сервер и выводит
 приватные в консоль — сохраните их (см. шаг 3).
 
 | Переменная | Обязательна | Назначение |
 |---|---|---|
-| `DOMAIN` | да | Домен для Nginx и Let's Encrypt (должен резолвиться на IP VPS) |
-| `EMAIL` | да | Email аккаунта Let's Encrypt |
+| `DOMAIN` | да | Домен/поддомен для Nginx (и Let's Encrypt, если не `NO_SSL=1`) |
+| `EMAIL` | да, кроме `NO_SSL=1` | Email аккаунта Let's Encrypt |
+| `NO_SSL` | нет (`0`/`1`) | `1` — развёртывание без SSL: без certbot/Let's Encrypt, nginx отдаёт plain HTTP на `:80`, UFW не открывает 443. Для Cloudflare Tunnel и т.п., где TLS снаружи |
 | `ROOT_PUBKEY` | нет | Свой публичный ключ админа → `/root/.ssh/authorized_keys` (вместо автогенерации) |
 | `EXPORTER_PUBKEY` | нет | Свой публичный ключ SFTP-заливки → `/home/exporter/.ssh/authorized_keys` (вместо автогенерации) |
 
@@ -118,20 +127,23 @@ DOMAIN=files.example.com EMAIL=admin@example.com sudo ./setup-vps.sh
 
 Что делает скрипт:
 
-1. `apt update && apt upgrade`; ставит `openssh-server`, `ufw`, `docker-ce`, `certbot`.
-   При отсутствии swap создаёт 1 ГБ `/swapfile` (страховка от OOM на 750 МБ RAM).
+1. `apt update && apt upgrade`; ставит `openssh-server`, `ufw`, `docker-ce` и `certbot`
+   (`certbot` — только если не `NO_SSL=1`). При отсутствии swap создаёт 1 ГБ `/swapfile`
+   (страховка от OOM на 750 МБ RAM).
 2. Создаёт пользователя `exporter` (`nologin`) и каталоги с правами из таблицы выше.
 3. Ключи: если не переданы свои, создаёт пары ed25519 — админскую `/root/.ssh/id_ed25519`
    и SFTP-ключ `/root/exporter-sftp-key`; публичные части ставит в `authorized_keys`,
    приватные выводит в консоль (только при создании). Существующие ключи не перегенерируются.
 4. Ставит sshd-конфиг: **только ключи**, root — без пароля, chroot + `internal-sftp` для exporter;
    проверяет `sshd -t`, делает `systemctl reload ssh`.
-5. UFW: разрешает 22/80/443, включает firewall (правила добавляются *до* включения).
+5. UFW: разрешает 22/80 (и 443, если не `NO_SSL=1`), включает firewall (правила добавляются *до* включения).
 6. Ставит nginx-конфиг в `/etc/nginx/conf.d/fileserver.conf` и поднимает контейнер
-   `fileserver` (`nginx:alpine`, `--restart unless-stopped`).
+   `fileserver` (`nginx:alpine`, `--restart unless-stopped`). При `NO_SSL=1` — plain HTTP на :80,
+   без 443 и без монтирования каталогов Let's Encrypt.
 7. Let's Encrypt **webroot-режимом через сам контейнер** (ACME-челленджи отдаёт Nginx на :80):
    при первом запуске — временный HTTP-конфиг → `certbot certonly --webroot` → финальный TLS-конфиг.
    Ставит renewal-hook: после автопродления сертификата nginx в контейнере перезагружается.
+   При `NO_SSL=1` весь этот шаг пропускается (сертификат и его продление не нужны).
 
 Скрипт **идемпотентен**: повторный запуск безопасен (контейнер пересоздаётся, конфиги
 перезаписываются тем же содержимым, ключи не дублируются и не перегенерируются). Если
@@ -251,6 +263,9 @@ docker ps --filter name=fileserver   # → Up, restart policy unless-stopped
 | `/files/*` | `Cache-Control: public, max-age=31536000, immutable` | Файлы не перекачиваются повторно; целостность гарантирует MD5 из манифеста, а не HTTP-кэш |
 
 ### Let's Encrypt и автопродление
+
+> При `NO_SSL=1` (напр. Cloudflare Tunnel) весь этот раздел не применяется: certbot не ставится,
+> сертификат не выдаётся и не продлевается, nginx отдаёт plain HTTP на :80 — TLS терминируется снаружи.
 
 - Выдача — **webroot-режим**: `certbot certonly --webroot -w /var/www/letsencrypt`.
   Челленджи `/.well-known/acme-challenge/*` отдаёт сам контейнер на порту 80, поэтому

@@ -3,17 +3,21 @@
 # setup-vps.sh — первичная настройка VPS (Debian 12 x64) для автообновления игры.
 #
 # Что делает:
-#   1. Обновляет систему; ставит openssh-server, ufw, docker-ce, certbot.
+#   1. Обновляет систему; ставит openssh-server, ufw, docker-ce (+certbot, если не NO_SSL=1).
 #   2. Создаёт SFTP-пользователя exporter и структуру каталогов:
 #        /srv/gamefiles          — chroot-корень (root:root 755, требование OpenSSH)
 #        /srv/gamefiles/www      — записываемая область (exporter:exporter 755),
 #                                  она же web-корень Nginx
 #   3. Харденинг SSH: только ключи; root — без пароля; chroot для exporter.
-#   4. UFW: открыты только 22, 80, 443.
+#   4. UFW: открыты 22 и 80 (+443, если не NO_SSL=1).
 #   5. Nginx в Docker (контейнер fileserver) + Let's Encrypt (webroot через контейнер).
+#      При NO_SSL=1 — без Let's Encrypt: nginx отдаёт plain HTTP на :80 (TLS терминируется
+#      снаружи, напр. Cloudflare Tunnel с поддоменом, у которого уже есть сертификат).
 #
 # Использование (на VPS):
 #   DOMAIN=files.example.com EMAIL=admin@example.com sudo ./setup-vps.sh
+#   # без SSL-сертификата (напр. за Cloudflare Tunnel, TLS уже снаружи):
+#   NO_SSL=1 DOMAIN=files.example.com sudo ./setup-vps.sh
 #
 # Ключи: если ROOT_PUBKEY/EXPORTER_PUBKEY не заданы, скрипт сам создаёт пары
 # ed25519 (если их ещё нет), ставит публичные части на сервер и выводит приватные
@@ -43,10 +47,15 @@ usage() {
   cat <<'EOF'
 Использование:
   DOMAIN=<домен> EMAIL=<email> [ROOT_PUBKEY=...] [EXPORTER_PUBKEY=...] sudo ./setup-vps.sh
+  NO_SSL=1 DOMAIN=<домен> [ROOT_PUBKEY=...] [EXPORTER_PUBKEY=...] sudo ./setup-vps.sh
 
 Переменные окружения:
-  DOMAIN           Обязательна. Домен, на который указывает A-запись (files.example.com).
-  EMAIL            Обязателен. Email для аккаунта Let's Encrypt.
+  DOMAIN           Обязательна. Домен/поддомен, на который указывает A-запись (files.example.com).
+  EMAIL            Обязателен для Let's Encrypt. Не нужен при NO_SSL=1.
+  NO_SSL           Необязательно (0/1). =1 — развёртывание без SSL-сертификата: пропускаются
+                   certbot и выдача/продление Let's Encrypt, nginx отдаёт plain HTTP на :80.
+                   Для случаев, когда TLS терминируется снаружи (напр. Cloudflare Tunnel с
+                   поддоменом, у которого уже есть сертификат).
   ROOT_PUBKEY      Необязательно. Свой публичный ключ админа → /root/.ssh/authorized_keys.
   EXPORTER_PUBKEY  Необязательно. Свой публичный ключ SFTP-заливки → /home/exporter/.ssh/authorized_keys.
 
@@ -80,19 +89,32 @@ fi
 
 DOMAIN="${DOMAIN:-}"
 EMAIL="${EMAIL:-}"
+NO_SSL="${NO_SSL:-0}"
 ROOT_PUBKEY="${ROOT_PUBKEY:-}"
 EXPORTER_PUBKEY="${EXPORTER_PUBKEY:-}"
 
+# Нормализуем NO_SSL к 1/0 (принимает 1/true/yes/on).
+case "${NO_SSL,,}" in
+  1|true|yes|on) NO_SSL=1 ;;
+  *)             NO_SSL=0 ;;
+esac
+
 [ -n "$DOMAIN" ] || { usage; die "Не задан DOMAIN"; }
-[ -n "$EMAIL" ]  || { usage; die "Не задан EMAIL"; }
+if [ "$NO_SSL" != "1" ]; then
+  [ -n "$EMAIL" ] || { usage; die "Не задан EMAIL (нужен для Let's Encrypt; при NO_SSL=1 не требуется)"; }
+fi
 printf '%s' "$DOMAIN" | grep -Eqi '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(\.[a-z]{2,})+$' \
   || die "DOMAIN не похож на домен: '$DOMAIN'"
 
 export DEBIAN_FRONTEND=noninteractive
 
 if ! getent hosts "$DOMAIN" >/dev/null 2>&1; then
-  warn "Домен $DOMAIN пока не резолвится. Let's Encrypt не сможет выдать сертификат."
-  warn "Создайте A-запись на IP этого VPS и перезапустите скрипт (он идемпотентен)."
+  if [ "$NO_SSL" = "1" ]; then
+    warn "Домен $DOMAIN пока не резолвится. Для Cloudflare Tunnel убедитесь, что поддомен настроен (CNAME на <tunnel-id>.cfargotunnel.com)."
+  else
+    warn "Домен $DOMAIN пока не резолвится. Let's Encrypt не сможет выдать сертификат."
+    warn "Создайте A-запись на IP этого VPS и перезапустите скрипт (он идемпотентен)."
+  fi
 fi
 
 # ------------------------------------------------- 1. система и пакеты
@@ -123,10 +145,17 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" > /etc/apt/sources.list.d/docker.list
 apt-get update -qq
 
-log "Установка пакетов: docker-ce, openssh-server, ufw, certbot..."
-apt-get install -y -qq \
-  docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
-  openssh-server ufw certbot >/dev/null
+if [ "$NO_SSL" = "1" ]; then
+  log "Установка пакетов: docker-ce, openssh-server, ufw (без certbot — NO_SSL=1)..."
+  apt-get install -y -qq \
+    docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+    openssh-server ufw >/dev/null
+else
+  log "Установка пакетов: docker-ce, openssh-server, ufw, certbot..."
+  apt-get install -y -qq \
+    docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin \
+    openssh-server ufw certbot >/dev/null
+fi
 
 # Лог-ротация контейнеров (nginx пишет access log в stdout → docker logs).
 if [ ! -f /etc/docker/daemon.json ]; then
@@ -141,7 +170,9 @@ fi
 
 systemctl enable --now docker
 systemctl enable --now ssh
-systemctl enable certbot.timer || true
+if [ "$NO_SSL" != "1" ]; then
+  systemctl enable certbot.timer || true
+fi
 
 # ------------------------------------------- 2. пользователь и каталоги
 log "Создаю пользователя exporter и структуру /srv/gamefiles..."
@@ -162,10 +193,12 @@ chown exporter:exporter /srv/gamefiles/www /srv/gamefiles/www/files
 chmod 755 /srv/gamefiles/www /srv/gamefiles/www/files
 
 # Webroot для ACME HTTP-01 челленджей Let's Encrypt (отдаётся контейнером на :80).
-mkdir -p /var/www/letsencrypt/.well-known/acme-challenge
-chown -R root:root /var/www/letsencrypt
-chmod 755 /var/www/letsencrypt /var/www/letsencrypt/.well-known \
-          /var/www/letsencrypt/.well-known/acme-challenge
+if [ "$NO_SSL" != "1" ]; then
+  mkdir -p /var/www/letsencrypt/.well-known/acme-challenge
+  chown -R root:root /var/www/letsencrypt
+  chmod 755 /var/www/letsencrypt /var/www/letsencrypt/.well-known \
+            /var/www/letsencrypt/.well-known/acme-challenge
+fi
 
 # ------------------------------------------------------------------- keys
 install_authorized_key() {
@@ -264,10 +297,16 @@ sshd -t || die "Конфигурация sshd не прошла проверку
 systemctl reload ssh
 
 # -------------------------------------------------------------------- UFW
-log "Настраиваю UFW (22, 80, 443)..."
-ufw allow 22/tcp  >/dev/null
-ufw allow 80/tcp  >/dev/null
-ufw allow 443/tcp >/dev/null
+if [ "$NO_SSL" = "1" ]; then
+  log "Настраиваю UFW (22, 80 — без 443; TLS терминируется снаружи)..."
+else
+  log "Настраиваю UFW (22, 80, 443)..."
+fi
+ufw allow 22/tcp >/dev/null
+ufw allow 80/tcp >/dev/null
+if [ "$NO_SSL" != "1" ]; then
+  ufw allow 443/tcp >/dev/null
+fi
 ufw default deny incoming  >/dev/null
 ufw default allow outgoing >/dev/null
 if ! ufw --force enable >/dev/null; then
@@ -278,7 +317,48 @@ fi
 NGINX_CONF=/etc/nginx/conf.d/fileserver.conf
 mkdir -p /etc/nginx/conf.d
 
-write_nginx_final() {
+# Общие директивы (производительность + сжатие + кэширование) — одинаковы для обоих режимов.
+emit_perf_and_cache() {
+  cat <<'EOF'
+    # --- Производительность (VPS: 750 МБ RAM / 1 ядро) -----------------------
+    sendfile on;
+    tcp_nopush on;
+    # Короткое valid-окно намеренно: после заливки новой версии файлы из files/*
+    # могут отдаваться по старому fd до open_file_cache_valid. Launcher сверяет MD5
+    # и повторяет скачивание (до 3 раз), поэтому окно перекрывается ретраями.
+    open_file_cache max=2048 inactive=30s;
+    open_file_cache_valid 5s;
+    open_file_cache_min_uses 1;
+    open_file_cache_errors on;
+
+    # --- Сжатие ---------------------------------------------------------------
+    # gzip только для текстовых типов. .zip / .pak / .gz уже сжаты — их MIME-типы
+    # (application/zip, application/gzip, application/octet-stream) в список
+    # gzip_types НЕ входят, поэтому к ним gzip не применяется.
+    gzip on;
+    gzip_vary on;
+    gzip_comp_level 5;
+    gzip_min_length 1024;
+    gzip_types application/json text/plain text/css application/javascript image/svg+xml;
+
+    # --- Кэширование метаданных: всегда сверять с сервером --------------------
+    location = /version.json {
+        add_header Cache-Control "no-cache";
+    }
+
+    location = /manifest.json {
+        add_header Cache-Control "no-cache";
+    }
+
+    # --- Игровые файлы: кэш навсегда (целостность проверяется по MD5 из манифеста)
+    location /files/ {
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+EOF
+}
+
+# Финальный конфиг с Let's Encrypt: HTTP-редирект + ACME-челленджи + HTTPS.
+write_nginx_ssl() {
   cat > "$NGINX_CONF" <<EOF
 # =============================================================================
 # fileserver — статика для автообновления игры (установлено setup-vps.sh)
@@ -314,40 +394,7 @@ server {
     ssl_session_cache shared:SSL:10m;
     ssl_session_timeout 1d;
 
-    # --- Производительность (VPS: 750 МБ RAM / 1 ядро) -----------------------
-    sendfile on;
-    tcp_nopush on;
-    # Короткое valid-окно намеренно: после заливки новой версии файлы из files/*
-    # могут отдаваться по старому fd до open_file_cache_valid. Launcher сверяет MD5
-    # и повторяет скачивание (до 3 раз), поэтому окно перекрывается ретраями.
-    open_file_cache max=2048 inactive=30s;
-    open_file_cache_valid 5s;
-    open_file_cache_min_uses 1;
-    open_file_cache_errors on;
-
-    # --- Сжатие ---------------------------------------------------------------
-    # gzip только для текстовых типов. .zip / .pak / .gz уже сжаты — их MIME-типы
-    # (application/zip, application/gzip, application/octet-stream) в список
-    # gzip_types НЕ входят, поэтому к ним gzip не применяется.
-    gzip on;
-    gzip_vary on;
-    gzip_comp_level 5;
-    gzip_min_length 1024;
-    gzip_types application/json text/plain text/css application/javascript image/svg+xml;
-
-    # --- Кэширование метаданных: всегда сверять с сервером --------------------
-    location = /version.json {
-        add_header Cache-Control "no-cache";
-    }
-
-    location = /manifest.json {
-        add_header Cache-Control "no-cache";
-    }
-
-    # --- Игровые файлы: кэш навсегда (целостность проверяется по MD5 из манифеста)
-    location /files/ {
-        add_header Cache-Control "public, max-age=31536000, immutable";
-    }
+$(emit_perf_and_cache)
 }
 EOF
 }
@@ -372,19 +419,49 @@ server {
 EOF
 }
 
+# Финальный конфиг без SSL (NO_SSL=1): plain HTTP на :80, без редиректа и TLS.
+# Для случаев, когда TLS терминируется снаружи (напр. Cloudflare Tunnel).
+write_nginx_http() {
+  cat > "$NGINX_CONF" <<EOF
+# =============================================================================
+# fileserver — статика для автообновления игры (установлено setup-vps.sh)
+# Домен: ${DOMAIN}
+# Режим: без SSL (NO_SSL=1) — plain HTTP на :80, TLS терминируется снаружи.
+# =============================================================================
+
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    root /usr/share/nginx/html;   # = /srv/gamefiles/www (read-only volume)
+
+$(emit_perf_and_cache)
+}
+EOF
+}
+
 start_fileserver() {
   docker pull nginx:alpine >/dev/null 2>&1 \
     || warn "Не удалось скачать nginx:alpine — использую кэшированный образ."
   # Пересоздание = детерминированная идемпотентность (конфиги смонтированы ro).
   docker rm -f fileserver >/dev/null 2>&1 || true
+
+  local ports=("-p" "80:80")
+  local volumes=(
+    "-v" "/srv/gamefiles/www:/usr/share/nginx/html:ro"
+    "-v" "/etc/nginx/conf.d:/etc/nginx/conf.d:ro"
+  )
+  if [ "$NO_SSL" != "1" ]; then
+    ports+=("-p" "443:443")
+    volumes+=("-v" "/etc/letsencrypt:/etc/letsencrypt:ro")
+    volumes+=("-v" "/var/www/letsencrypt:/var/www/letsencrypt:ro")
+  fi
+
   docker run -d \
     --name fileserver \
     --restart unless-stopped \
-    -p 80:80 -p 443:443 \
-    -v /srv/gamefiles/www:/usr/share/nginx/html:ro \
-    -v /etc/letsencrypt:/etc/letsencrypt:ro \
-    -v /var/www/letsencrypt:/var/www/letsencrypt:ro \
-    -v /etc/nginx/conf.d:/etc/nginx/conf.d:ro \
+    "${ports[@]}" \
+    "${volumes[@]}" \
     nginx:alpine >/dev/null
   local i
   for i in $(seq 1 30); do
@@ -398,30 +475,37 @@ start_fileserver() {
 
 log "Запускаю Nginx в Docker (fileserver)..."
 CERT_DIR="/etc/letsencrypt/live/${DOMAIN}"
-if [ -f "${CERT_DIR}/fullchain.pem" ]; then
-  log "Сертификат для ${DOMAIN} уже есть — пропускаю выдачу."
-  write_nginx_final
-else
-  log "Первичная выдача сертификата Let's Encrypt (webroot через контейнер)..."
-  write_nginx_bootstrap
+
+if [ "$NO_SSL" = "1" ]; then
+  log "Режим без SSL (NO_SSL=1): Let's Encrypt пропускается, nginx отдаёт plain HTTP на :80."
+  write_nginx_http
   start_fileserver
-  if ! certbot certonly --webroot -w /var/www/letsencrypt \
-      -d "$DOMAIN" \
-      --email "$EMAIL" --agree-tos --no-eff-email --non-interactive; then
-    die "Не удалось получить сертификат. Проверьте: A-запись ${DOMAIN} → IP VPS (dig +short ${DOMAIN}), порты 80/443 открыты, домен делегирован."
+else
+  if [ -f "${CERT_DIR}/fullchain.pem" ]; then
+    log "Сертификат для ${DOMAIN} уже есть — пропускаю выдачу."
+    write_nginx_ssl
+  else
+    log "Первичная выдача сертификата Let's Encrypt (webroot через контейнер)..."
+    write_nginx_bootstrap
+    start_fileserver
+    if ! certbot certonly --webroot -w /var/www/letsencrypt \
+        -d "$DOMAIN" \
+        --email "$EMAIL" --agree-tos --no-eff-email --non-interactive; then
+      die "Не удалось получить сертификат. Проверьте: A-запись ${DOMAIN} → IP VPS (dig +short ${DOMAIN}), порты 80/443 открыты, домен делегирован."
+    fi
+    write_nginx_ssl
   fi
-fi
 
-write_nginx_final
-start_fileserver
+  start_fileserver
 
-# Автопродление: после успешного renew перезагружаем nginx в контейнере.
-mkdir -p /etc/letsencrypt/renewal-hooks/deploy
-cat > /etc/letsencrypt/renewal-hooks/deploy/reload-fileserver.sh <<'EOF'
+  # Автопродление: после успешного renew перезагружаем nginx в контейнере.
+  mkdir -p /etc/letsencrypt/renewal-hooks/deploy
+  cat > /etc/letsencrypt/renewal-hooks/deploy/reload-fileserver.sh <<'EOF'
 #!/bin/sh
 docker exec fileserver nginx -s reload || docker restart fileserver
 EOF
-chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-fileserver.sh
+  chmod 755 /etc/letsencrypt/renewal-hooks/deploy/reload-fileserver.sh
+fi
 
 # ------------------------------------------------------------- проверка
 log "Финальная проверка..."
@@ -436,14 +520,23 @@ if [ -f "${CERT_DIR}/fullchain.pem" ]; then
   esac
 fi
 
+if [ "$NO_SSL" = "1" ]; then
+  WEB_URL="http://${DOMAIN}"
+  MODE_NOTE="Режим: без SSL (NO_SSL=1) — plain HTTP на :80, TLS терминируется снаружи."
+else
+  WEB_URL="https://${DOMAIN}"
+  MODE_NOTE="Режим: Let's Encrypt (автопродление через certbot.timer)."
+fi
+
 cat <<EOF
 
 =============================================================================
  [OK] Настройка завершена.
 
  Домен:        ${DOMAIN}
+ ${MODE_NOTE}
  SFTP:         exporter@${DOMAIN} (chroot /srv/gamefiles, запись в www/)
- Web-корень:   /srv/gamefiles/www → https://${DOMAIN}/version.json и т.д.
+ Web-корень:   /srv/gamefiles/www → ${WEB_URL}/version.json и т.д.
 
  Дальше:
    1. Сохраните приватные ключи (созданные в этом запуске показаны выше):
