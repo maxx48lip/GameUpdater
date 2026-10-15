@@ -21,11 +21,6 @@ public sealed class LauncherConfig
     [JsonPropertyName("excludeFromDelete")]
     public List<string> ExcludeFromDelete { get; set; } = new();
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true,
-    };
-
     /// <summary>Loads and validates launcher.json.</summary>
     public static LauncherConfig Load(string path)
     {
@@ -42,7 +37,7 @@ public sealed class LauncherConfig
         LauncherConfig? config;
         try
         {
-            config = JsonSerializer.Deserialize<LauncherConfig>(json, JsonOpts);
+            config = JsonSerializer.Deserialize(json, LauncherJsonContext.Default.LauncherConfig);
         }
         catch (JsonException ex)
         {

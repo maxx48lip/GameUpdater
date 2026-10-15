@@ -47,7 +47,9 @@ public static class UpdateChecker
     {
         var path = Path.Combine(gameFolder, LocalVersionFileName);
         var tmp = path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(new { version }, new JsonSerializerOptions { WriteIndented = true }));
+        File.WriteAllText(
+            tmp,
+            JsonSerializer.Serialize(new LocalVersionFile { Version = version }, LauncherJsonContext.Default.LocalVersionFile));
         File.Move(tmp, path, overwrite: true);
     }
 

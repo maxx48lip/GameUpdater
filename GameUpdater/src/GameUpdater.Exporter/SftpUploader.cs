@@ -27,8 +27,6 @@ public sealed class SftpUploader
     private readonly SftpOptions _options;
     private readonly int _maxRetries;
 
-    private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
-
     /// <summary>One set of files uploaded under a single remote prefix ("files" or "wiki").</summary>
     private sealed record FileGroup(string LocalRootDir, List<(string RelPath, long Size)> Files, string RemotePrefix);
 
@@ -147,7 +145,8 @@ public sealed class SftpUploader
         var localWikiManifest = Path.Combine(Path.GetTempPath(), "gameup-wiki-manifest-" + Guid.NewGuid().ToString("N") + ".json");
         try
         {
-            await File.WriteAllTextAsync(localWikiManifest, JsonSerializer.Serialize(wiki.Manifest, JsonOpts), ct)
+            await File.WriteAllTextAsync(
+                    localWikiManifest, JsonSerializer.Serialize(wiki.Manifest, ExporterJsonContext.Default.Manifest), ct)
                 .ConfigureAwait(false);
 
             AnsiConsole.Info("Uploading wiki_manifest.json...");
@@ -189,7 +188,9 @@ public sealed class SftpUploader
                 {
                     try
                     {
-                        return JsonSerializer.Deserialize<Manifest>(await File.ReadAllTextAsync(local, ct).ConfigureAwait(false));
+                        return JsonSerializer.Deserialize(
+                            await File.ReadAllTextAsync(local, ct).ConfigureAwait(false),
+                            ExporterJsonContext.Default.Manifest);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {

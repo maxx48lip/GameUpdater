@@ -11,11 +11,6 @@ internal static class Program
 {
     private const string AppVersion = "1.0.0";
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        WriteIndented = true,
-    };
-
     private static async Task<int> Main(string[] args)
     {
         // Consistent output regardless of host locale (decimal point, etc.).
@@ -193,8 +188,8 @@ internal static class Program
             MinLauncherVersion = config?.MinLauncherVersion ?? "1.0.0",
         };
 
-        string manifestJson = JsonSerializer.Serialize(manifest, JsonOpts);
-        string versionJson = JsonSerializer.Serialize(versionInfo, JsonOpts);
+        string manifestJson = JsonSerializer.Serialize(manifest, ExporterJsonContext.Default.Manifest);
+        string versionJson = JsonSerializer.Serialize(versionInfo, ExporterJsonContext.Default.VersionInfo);
 
         // ------------------------------------------- dry-run / skip-upload
         if (!willUpload)
@@ -211,7 +206,8 @@ internal static class Program
             {
                 var localWikiManifest = Path.Combine(rootDir, ManifestBuilder.WikiManifestFileName);
                 await File.WriteAllTextAsync(
-                    localWikiManifest, JsonSerializer.Serialize(wiki.Manifest, JsonOpts), ct).ConfigureAwait(false);
+                    localWikiManifest, JsonSerializer.Serialize(wiki.Manifest, ExporterJsonContext.Default.Manifest), ct)
+                        .ConfigureAwait(false);
                 AnsiConsole.Ok($"Wrote {localWikiManifest}");
             }
 

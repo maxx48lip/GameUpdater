@@ -11,11 +11,6 @@ internal static class Program
 {
     private const string AppVersion = "1.0.0";
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true,
-    };
-
     /// <summary>Mutable state shared between Main and RunAsync (async methods cannot use ref parameters).</summary>
     private sealed class RunContext
     {
@@ -200,8 +195,11 @@ internal static class Program
                 var json = await http.GetStringAsync(url, ct).ConfigureAwait(false);
                 try
                 {
-                    return JsonSerializer.Deserialize<T>(json, JsonOpts)
-                        ?? throw new InvalidOperationException($"Empty response from {url}.");
+                    // T is always a type registered in LauncherJsonContext (VersionInfo / Manifest).
+                    var typeInfo = LauncherJsonContext.Default.GetTypeInfo(typeof(T))
+                        ?? throw new InvalidOperationException($"Type {typeof(T).Name} is not registered in LauncherJsonContext.");
+                    return (T)(JsonSerializer.Deserialize(json, typeInfo)
+                        ?? throw new InvalidOperationException($"Empty response from {url}."));
                 }
                 catch (JsonException ex)
                 {

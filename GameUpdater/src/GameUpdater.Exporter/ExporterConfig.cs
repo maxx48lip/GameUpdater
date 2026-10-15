@@ -57,13 +57,6 @@ public sealed class ExporterConfig
     [JsonPropertyName("maxRetries")]
     public int MaxRetries { get; set; } = 3;
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true,
-    };
-
     /// <summary>SFTP connection options derived from this config ("~" in the key path is expanded).</summary>
     public SftpOptions ToSftpOptions() => new()
     {
@@ -79,7 +72,7 @@ public sealed class ExporterConfig
             throw new FileNotFoundException($"Config file not found: {path}", path);
 
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<ExporterConfig>(json, JsonOpts)
+        return JsonSerializer.Deserialize(json, ExporterJsonContext.Default.ExporterConfig)
                ?? throw new InvalidDataException($"Config file is empty or invalid: {path}");
     }
 
