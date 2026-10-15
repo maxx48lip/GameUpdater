@@ -32,12 +32,10 @@ jobs:
             dotnet publish GameUpdater/src/GameUpdater.Exporter \
               -c Release -r "$rid" --self-contained true --nologo \
               -p:PublishSingleFile=true -p:DebugType=embedded -p:PublishTrimmed=true \
-              -p:EnableCompressionInSingleFile=true \
               -o "publish/exporter/$rid"
             dotnet publish GameUpdater/src/GameUpdater.Launcher \
               -c Release -r "$rid" --self-contained true --nologo \
               -p:PublishSingleFile=true -p:DebugType=embedded -p:PublishTrimmed=true \
-              -p:EnableCompressionInSingleFile=true \
               -o "publish/launcher/$rid"
           done
 
