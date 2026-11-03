@@ -1,0 +1,11 @@
+{
+  "sftpHost": "files.example.com",
+  "sftpPort": 22,
+  "sftpUser": "root",
+  "remoteBasePath": "/srv/gamefiles/www",
+  "buildFolder": "/path/to/build",
+  "ignorePatterns": [ "*.log", "*.pdb", "local_version.json", "settings.json" ],
+  "minLauncherVersion": "1.0.0",
+  "uploadMode": "batch",
+  "maxRetries": 3
+}

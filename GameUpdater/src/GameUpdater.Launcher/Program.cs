@@ -105,7 +105,7 @@ internal static class Program
         if (UpdateChecker.IsUpToDate(localVersion, versionInfo.Version))
         {
             AnsiConsole.Info("Versions match — no update needed.");
-            return LaunchGame(config, gameFolder, options.NoLaunch);
+            return await LaunchGame(config, gameFolder, options.NoLaunch, ct).ConfigureAwait(false);
         }
 
         AnsiConsole.Info("Update required.");
@@ -161,10 +161,10 @@ internal static class Program
         UpdateChecker.WriteLocalVersion(gameFolder, versionInfo.Version);
         AnsiConsole.Ok($"Local version updated to {versionInfo.Version}");
 
-        return LaunchGame(config, gameFolder, options.NoLaunch);
+        return await LaunchGame(config, gameFolder, options.NoLaunch, ct).ConfigureAwait(false);
     }
 
-    private static int LaunchGame(LauncherConfig config, string gameFolder, bool noLaunch)
+    private static async Task<int> LaunchGame(LauncherConfig config, string gameFolder, bool noLaunch, CancellationToken ct)
     {
         if (noLaunch)
         {
@@ -172,6 +172,28 @@ internal static class Program
             return 0;
         }
 
+        // Server availability gate: servers.json is a regular manifest file downloaded above.
+        var health = await ServerHealthCheck.CheckAsync(gameFolder, ct).ConfigureAwait(false);
+        if (health.Skipped)
+        {
+            AnsiConsole.Warn(health.Error ?? "server check skipped");
+        }
+        else if (!health.Available)
+        {
+            AnsiConsole.Error($"Game server unavailable: {health.ServerUrl} ({health.Error})");
+            AnsiConsole.Warn("Press any key to exit...");
+            try
+            {
+                Console.ReadKey(); // no TTY (redirected output) — just exit below
+            }
+            catch (InvalidOperationException)
+            {
+            }
+
+            return 1;
+        }
+
+        AnsiConsole.Info($"Server OK: {health.ServerUrl}");
         AnsiConsole.Info("Launching game...");
         try
         {

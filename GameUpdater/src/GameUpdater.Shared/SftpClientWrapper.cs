@@ -380,7 +380,10 @@ public static class SftpClientWrapper
 
         arguments.Append("-o StrictHostKeyChecking=accept-new ");
         arguments.Append("-o ConnectTimeout=").Append(options.ConnectTimeoutSeconds).Append(' ');
-        if (!passwordMode)
+        // "-b" implies batch mode, which disables the password prompt; re-enable it in password mode.
+        if (passwordMode)
+            arguments.Append("-o BatchMode=no ");
+        else
             arguments.Append("-o BatchMode=yes ");
 
         if (batchFilePath is not null)
