@@ -120,6 +120,9 @@ exporter --version 1.0.5 --path ./build --config ./exporter.json
   "sftpKeyPath": "~/.ssh/id_ed25519",
   "remoteBasePath": "/srv/gamefiles",
   "buildFolder": "/path/to/build",
+  "extraFiles": [
+    { "source": "/path/to/Assets/servers.json", "target": "servers.json" }
+  ],
   "ignorePatterns": ["*.log", "*.pdb", "local_version.json", ".DS_Store"],
   "wikiFolder": "/path/to/Wiki",
   "wikiIgnorePatterns": [".git", "md", "scripts/__pycache__"],
@@ -135,6 +138,7 @@ exporter --version 1.0.5 --path ./build --config ./exporter.json
 | `sftpKeyPath` | Путь к приватному ключу (`~` раскрывается). **Рекомендуется.** |
 | `remoteBasePath` | Базовая папка на сервере (см. структуру ниже; для chroot-сервера — `/www`) |
 | `buildFolder` | Необязательно. Путь к папке со сборкой (используется, если не передан `--path`; CLI имеет приоритет) |
+| `extraFiles` | Необязательно. Список файлов вне сборки, которые нужно включить в пакет: каждый `{ "source": <локальный путь>, "target": <относительный unix-путь> }` копируется в папку сборки **до** сканирования и дальше хешируется/заливается как обычный игровой файл (попадает в манифест и на сервер под `/files/<target>`). Типичный случай: `servers.json`, который лежит в `Assets/` проекта, а не в папке сборки. Отсутствующий `source` или `target` с `..`/абсолютным путём — ошибка до начала загрузки |
 | `ignorePatterns` | Глоб-паттерны (`*`, `?`) для файлов и каталогов; применяются к имени файла и относительному пути, без учёта регистра |
 | `wikiFolder` | Необязательно. Путь к папке статической wiki: её содержимое заливается в `<remoteBasePath>/wiki/` (доступно по `https://<host>/wiki/`) **вне** манифеста — Launcher её не видит и не скачивает. Обновляется только с флагом `--update-wiki`, дельтой (см. ниже) |
 | `wikiIgnorePatterns` | Глоб-паттерны для сканирования wiki (в дополнение к встроенному мусору ОС); например `.git`, папки с исходниками |

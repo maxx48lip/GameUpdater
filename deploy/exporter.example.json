@@ -4,6 +4,9 @@
   "sftpUser": "root",
   "remoteBasePath": "/srv/gamefiles/www",
   "buildFolder": "/path/to/build",
+  "extraFiles": [
+    { "source": "/path/to/Assets/servers.json", "target": "servers.json" }
+  ],
   "ignorePatterns": [ "*.log", "*.pdb", "local_version.json", "settings.json" ],
   "minLauncherVersion": "1.0.0",
   "uploadMode": "batch",

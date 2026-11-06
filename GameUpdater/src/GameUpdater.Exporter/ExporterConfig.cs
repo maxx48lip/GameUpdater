@@ -53,6 +53,14 @@ public sealed class ExporterConfig
     [JsonPropertyName("wikiIgnorePatterns")]
     public List<string> WikiIgnorePatterns { get; set; } = new();
 
+    /// <summary>
+    /// Additional files to include in the package. Each entry is copied into the build folder before
+    /// scanning, so it is hashed and uploaded like any other game file (e.g. a servers.json that lives
+    /// outside the build). Optional: null/empty → no extra files.
+    /// </summary>
+    [JsonPropertyName("extraFiles")]
+    public List<ExtraFileEntry>? ExtraFiles { get; set; }
+
     /// <summary>Upload attempts per file before giving up.</summary>
     [JsonPropertyName("maxRetries")]
     public int MaxRetries { get; set; } = 3;
@@ -86,4 +94,16 @@ public sealed class ExporterConfig
             throw new InvalidDataException(
                 $"Config: \"remoteBasePath\" must be an absolute unix path, got '{RemoteBasePath}'.");
     }
+}
+
+/// <summary>One "extraFiles" entry: a local file included in the package under a given relative path.</summary>
+public sealed class ExtraFileEntry
+{
+    /// <summary>Local source path ("~" is expanded; relative paths resolve against the current directory).</summary>
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = string.Empty;
+
+    /// <summary>Relative unix path inside the package (appears in manifest.json and under /files/ on the server).</summary>
+    [JsonPropertyName("target")]
+    public string Target { get; set; } = string.Empty;
 }

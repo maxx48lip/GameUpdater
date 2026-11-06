@@ -104,6 +104,48 @@ public static class ManifestBuilder
         return results.OrderBy(f => f.RelativeUnixPath, StringComparer.Ordinal).ToList();
     }
 
+    // ------------------------------------------------------- extra files
+
+    /// <summary>
+    /// Copies the config's "extraFiles" into rootDir so they become part of the package (hashed and
+    /// uploaded like any other game file). Fails fast on a missing source or an invalid target.
+    /// Returns the copied target paths in input order.
+    /// </summary>
+    public static List<string> ApplyExtraFiles(string rootDir, IEnumerable<ExtraFileEntry>? extraFiles, bool verbose)
+    {
+        if (extraFiles is null || !extraFiles.Any())
+            return new List<string>();
+
+        var copied = new List<string>();
+        foreach (var entry in extraFiles)
+        {
+            if (string.IsNullOrWhiteSpace(entry.Source))
+                throw new InvalidDataException("Config: \"extraFiles\" entry has an empty \"source\".");
+            if (string.IsNullOrWhiteSpace(entry.Target))
+                throw new InvalidDataException(
+                    $"Config: \"extraFiles\" entry for '{entry.Source}' has an empty \"target\".");
+
+            var target = PathNormalizer.ToUnix(entry.Target.Trim());
+            if (target.Split('/').Any(part => part is "" or "." or ".."))
+                throw new InvalidDataException(
+                    $"Config: extra file target must be a relative path without '..': '{entry.Target}'.");
+            if (target == ManifestFileName || target == VersionFileName || target == WikiManifestFileName)
+                throw new InvalidDataException($"Config: extra file target collides with a generated artifact: '{target}'.");
+
+            var source = Path.GetFullPath(PathNormalizer.ExpandHome(entry.Source));
+            if (!File.Exists(source))
+                throw new FileNotFoundException($"Extra file source not found: {source}", source);
+
+            var dest = Path.Combine(rootDir, target.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+            File.Copy(source, dest, overwrite: true);
+            copied.Add(target);
+            if (verbose) AnsiConsole.Info($"Extra file: {source} -> {dest}");
+        }
+
+        return copied;
+    }
+
     // ------------------------------------------------------------- build
 
     /// <summary>Scans rootDir and computes MD5 for every file (streaming).</summary>

@@ -119,6 +119,12 @@ internal static class Program
                 AnsiConsole.Info($"sftp client: {sftpVersion}");
         }
 
+        // Extra files (config "extraFiles") are copied into the build folder before scanning, so they
+        // are hashed and uploaded like any other game file.
+        var extraCopied = ManifestBuilder.ApplyExtraFiles(rootDir, config?.ExtraFiles, options.Verbose);
+        if (extraCopied.Count > 0)
+            AnsiConsole.Info($"Extra files included in the package: {string.Join(", ", extraCopied)}");
+
         // ------------------------------------------------ scan + hash
         AnsiConsole.Info($"Scanning {buildPath}...");
         var swScan = Stopwatch.StartNew();

@@ -15,6 +15,7 @@ internal static class Program
 
         await TestScanAndIgnorePatternsAsync();
         await TestSortingAndUnixPathsAsync();
+        await TestExtraFilesAsync();
         await TestMd5KnownVectorsAsync();
         await TestManifestJsonShapeAsync();
         TestPathNormalizer();
@@ -90,6 +91,73 @@ internal static class Program
         finally
         {
             Cleanup(root);
+        }
+    }
+
+    private static async Task TestExtraFilesAsync()
+    {
+        Console.WriteLine("TestExtraFiles:");
+        var root = MakeTempDir();
+        var outside = MakeTempDir();
+        try
+        {
+            WriteFile(root, "client.exe", "exe");
+            WriteFile(outside, "servers.json", "{ \"server\": \"https://game.example.com\" }");
+
+            var extra = new List<ExtraFileEntry>
+            {
+                new() { Source = Path.Combine(outside, "servers.json"), Target = "servers.json" },
+            };
+            ManifestBuilder.ApplyExtraFiles(root, extra, verbose: false);
+
+            TestAsserts.True(File.Exists(Path.Combine(root, "servers.json")),
+                "extra file copied into build folder");
+
+            var manifest = await ManifestBuilder.BuildAsync(
+                root, "1.0.5", Array.Empty<string>(), progress: null, verbose: false, CancellationToken.None);
+            TestAsserts.SequenceEqual(new[] { "client.exe", "servers.json" }, manifest.Files.Select(f => f.Path),
+                "extra file is part of the manifest");
+
+            var entry = manifest.Files.Single(f => f.Path == "servers.json");
+            TestAsserts.Equal(
+                await HashCalculator.ComputeMd5Async(Path.Combine(outside, "servers.json")),
+                entry.Hash, "extra file hash matches source");
+
+            // Missing source → fail fast.
+            bool missingThrew = false;
+            try
+            {
+                ManifestBuilder.ApplyExtraFiles(root, new List<ExtraFileEntry>
+                {
+                    new() { Source = Path.Combine(outside, "nope.json"), Target = "nope.json" },
+                }, verbose: false);
+            }
+            catch (FileNotFoundException) { missingThrew = true; }
+            TestAsserts.True(missingThrew, "missing source fails fast");
+
+            // Invalid targets are rejected.
+            foreach (var bad in new[] { "../evil", "/abs", "a/../../b" })
+            {
+                bool threw = false;
+                try
+                {
+                    ManifestBuilder.ApplyExtraFiles(root, new List<ExtraFileEntry>
+                    {
+                        new() { Source = Path.Combine(outside, "servers.json"), Target = bad },
+                    }, verbose: false);
+                }
+                catch (InvalidDataException) { threw = true; }
+                TestAsserts.True(threw, $"invalid target rejected: {bad}");
+            }
+
+            // Null → no-op.
+            TestAsserts.Equal(0, ManifestBuilder.ApplyExtraFiles(root, null, verbose: false).Count,
+                "null extra files is a no-op");
+        }
+        finally
+        {
+            Cleanup(root);
+            Cleanup(outside);
         }
     }
 
