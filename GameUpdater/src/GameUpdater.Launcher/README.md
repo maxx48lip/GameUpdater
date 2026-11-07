@@ -64,28 +64,22 @@ launcher [--config <file>] [options]
    Неверный хеш/сбой сети → повтор до 3 раз, затем `[ERROR] Failed to download <file>.`
 5. Удаление локальных файлов, которых нет в манифесте (с учётом `excludeFromDelete`).
 6. Запись новой версии в `local_version.json`.
-7. Проверка доступности игрового сервера (`ServerHealthCheck`): читает `servers.json` из gameFolder
-   и запрашивает `{server}/healthz` (таймаут 10 с). Любой ответ со статусом < 500 → OK; сетевая
-   ошибка/таймаут → `[ERROR] Game server unavailable: ...`, ожидание нажатия любой клавиши,
-   код выхода **1**. Нет `servers.json` или он не читается → предупреждение и запуск (игре
-   сообщит о проблеме сама при входе).
-8. Запуск игры: Windows — `Process.Start(exe)`; Linux/macOS — `chmod +x`
+7. Запуск игры: Windows — `Process.Start(exe)`; Linux/macOS — `chmod +x`
    (`File.SetUnixFileMode`, 0755) и запуск по полному пути; macOS `.app` — бинарь из `Contents/MacOS`.
 
 ## servers.json — адрес игрового сервера
 
-`servers.json` в gameFolder (`{ "server": "https://..." }`) раздаётся лаунчером как обычный файл
-манифеста: Exporter заливает его из папки сборки, при смене версии лаунчер обновляет/удаляет его
-как любой другой файл. Игровой клиент (Unity) читает адрес гейтвея именно оттуда
-(`ServersStore` → `GlobalConfig.BaseUrl`); перед запуском игры лаунчер проверяет этот адрес по
-`{server}/healthz`.
+`servers.json` в gameFolder раздаётся лаунчером как обычный файл манифеста: Exporter заливает его
+в пакет (опция `extraFiles`), при смене версии лаунчер обновляет/удаляет его как любой другой
+файл. Лаунчер это содержимое не парсит — адрес гейтвея и доступность сервера читает/проверяет сам
+игровой клиент (Unity: `ServersStore`).
 
 Ctrl+C (`Console.CancelKeyPress`) → отмена загрузок, удаление всех `.tmp`, код выхода **130**.
 
 ## Пример вывода
 
 ```text
-[INFO] Launcher v1.0.0
+[INFO] Launcher v1.0.1
 [INFO] Local version: 1.0.3
 [INFO] Remote version: 1.0.5
 [INFO] Update required.
@@ -95,7 +89,6 @@ Ctrl+C (`Console.CancelKeyPress`) → отмена загрузок, удале�
 [████████████████░░░░░░░░░░░░░░] 62% | 8/12 | 12.4 MB/s | data/level3.pak
 [OK]   Download complete in 28.1s
 [OK]   Local version updated to 1.0.5
-[INFO] Server OK: https://game.example.com
 [INFO] Launching game...
 ```
 

@@ -9,7 +9,7 @@ namespace GameUpdater.Launcher;
 
 internal static class Program
 {
-    private const string AppVersion = "1.0.0";
+    private const string AppVersion = "1.0.1";
 
     /// <summary>Mutable state shared between Main and RunAsync (async methods cannot use ref parameters).</summary>
     private sealed class RunContext
@@ -105,7 +105,7 @@ internal static class Program
         if (UpdateChecker.IsUpToDate(localVersion, versionInfo.Version))
         {
             AnsiConsole.Info("Versions match — no update needed.");
-            return await LaunchGame(config, gameFolder, options.NoLaunch, ct).ConfigureAwait(false);
+            return LaunchGame(config, gameFolder, options.NoLaunch);
         }
 
         AnsiConsole.Info("Update required.");
@@ -161,10 +161,10 @@ internal static class Program
         UpdateChecker.WriteLocalVersion(gameFolder, versionInfo.Version);
         AnsiConsole.Ok($"Local version updated to {versionInfo.Version}");
 
-        return await LaunchGame(config, gameFolder, options.NoLaunch, ct).ConfigureAwait(false);
+        return LaunchGame(config, gameFolder, options.NoLaunch);
     }
 
-    private static async Task<int> LaunchGame(LauncherConfig config, string gameFolder, bool noLaunch, CancellationToken ct)
+    private static int LaunchGame(LauncherConfig config, string gameFolder, bool noLaunch)
     {
         if (noLaunch)
         {
@@ -172,28 +172,7 @@ internal static class Program
             return 0;
         }
 
-        // Server availability gate: servers.json is a regular manifest file downloaded above.
-        var health = await ServerHealthCheck.CheckAsync(gameFolder, ct).ConfigureAwait(false);
-        if (health.Skipped)
-        {
-            AnsiConsole.Warn(health.Error ?? "server check skipped");
-        }
-        else if (!health.Available)
-        {
-            AnsiConsole.Error($"Game server unavailable: {health.ServerUrl} ({health.Error})");
-            AnsiConsole.Warn("Press any key to exit...");
-            try
-            {
-                Console.ReadKey(); // no TTY (redirected output) — just exit below
-            }
-            catch (InvalidOperationException)
-            {
-            }
-
-            return 1;
-        }
-
-        AnsiConsole.Info($"Server OK: {health.ServerUrl}");
+        // Server availability is checked by the client itself (it reads servers.json).
         AnsiConsole.Info("Launching game...");
         try
         {

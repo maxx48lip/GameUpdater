@@ -11,7 +11,7 @@ internal static class Program
 
     private static async Task<int> Main()
     {
-        Console.WriteLine("GameUpdater.Tests — ManifestBuilder / Shared / UpdateChecker / ServerHealthCheck (no NuGet)\n");
+        Console.WriteLine("GameUpdater.Tests — ManifestBuilder / Shared / UpdateChecker (no NuGet)\n");
 
         await TestScanAndIgnorePatternsAsync();
         await TestSortingAndUnixPathsAsync();
@@ -22,7 +22,6 @@ internal static class Program
         TestWikiDelta();
         TestCliOptions();
         await UpdateCheckerTests.RunAsync();
-        await ServersHealthCheckTests.RunAsync();
 
         Console.WriteLine($"\nResult: {TestAsserts.Passed} passed, {TestAsserts.Failures.Count} failed.");
         foreach (var failure in TestAsserts.Failures)

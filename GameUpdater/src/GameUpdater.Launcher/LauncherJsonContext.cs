@@ -19,7 +19,6 @@ namespace GameUpdater.Launcher;
 [JsonSerializable(typeof(LocalVersionFile))]
 [JsonSerializable(typeof(VersionInfo))]
 [JsonSerializable(typeof(Manifest))]
-[JsonSerializable(typeof(ServersFile))]
 public partial class LauncherJsonContext : JsonSerializerContext
 {
 }
