@@ -12,9 +12,10 @@ public sealed record UploadStats(TimeSpan Elapsed, int FileCount, long TotalByte
 public sealed record WikiUpload(string RootDir, Manifest Manifest);
 
 /// <summary>
-/// Uploads the build to the server via the external sftp client.
-/// Order is critical: 1) optional static wiki into wiki/ (delta), 2) game files into files/,
-/// 3) manifest.json, 4) version.json (last).
+/// Uploads the build to the server via the external sftp client. Delta-based like the launcher:
+/// only new/changed files are uploaded and stale remote files are removed. Order is critical:
+/// 1) optional static wiki into wiki/ (delta), 2) changed game files into files/,
+/// 3) stale game files removed, 4) manifest.json, 5) version.json (last).
 /// </summary>
 public sealed class SftpUploader
 {
@@ -53,15 +54,16 @@ public sealed class SftpUploader
         var sw = Stopwatch.StartNew();
         var state = new State();
 
-        // --- Resolve the wiki delta: previous remote manifest vs. the local scan.
+        // --- Resolve the deltas: previous remote manifests vs. the local scans.
         List<FileEntry>? wikiChanged = null;
         var wikiStale = new List<string>();
         string? wikiRootDir = null;
         if (wiki is not null && wiki.Manifest.Files.Count > 0)
         {
             wikiRootDir = wiki.RootDir;
-            var previous = await DownloadWikiManifestAsync(cancellationToken).ConfigureAwait(false);
-            var delta = WikiDelta.Compute(wiki.Manifest, previous);
+            var previous = await DownloadRemoteManifestAsync(ManifestBuilder.WikiManifestFileName, cancellationToken)
+                .ConfigureAwait(false);
+            var delta = ManifestDelta.Compute(wiki.Manifest, previous);
             wikiChanged = delta.ToUpload.ToList();
             wikiStale.AddRange(delta.StalePaths);
 
@@ -69,6 +71,20 @@ public sealed class SftpUploader
                 $"Wiki delta: {wikiChanged.Count} to upload, " +
                 $"{wiki.Manifest.Files.Count - wikiChanged.Count} unchanged, {wikiStale.Count} stale.");
         }
+
+        // Game files: upload only what is new/changed (hash differs from the previous remote
+        // manifest.json). Stale ones are removed after the new content is in place and before the
+        // new manifest is published — so a client mid-update on the old manifest never sees a file
+        // that is missing from both. No/corrupt previous manifest → full upload (first deploy).
+        var previousGame = await DownloadRemoteManifestAsync(ManifestBuilder.ManifestFileName, cancellationToken)
+            .ConfigureAwait(false);
+        var gameDelta = ManifestDelta.Compute(manifest, previousGame);
+        var gameChanged = gameDelta.ToUpload.ToList();
+        var gameStale = gameDelta.StalePaths;
+
+        AnsiConsole.Info(
+            $"Game delta: {gameChanged.Count} to upload, " +
+            $"{manifest.Files.Count - gameChanged.Count} unchanged, {gameStale.Count} stale.");
 
         // Order is critical: 1) optional static wiki into <remoteBase>/wiki/ (the launcher never
         // sees it), 2) game files into files/, 3) manifest.json, 4) version.json — always LAST,
@@ -81,7 +97,7 @@ public sealed class SftpUploader
                 WikiRemotePrefix));
         groups.Add(new FileGroup(
             rootDir,
-            manifest.Files.Select(f => (f.Path, f.Size)).ToList(),
+            gameChanged.Select(f => (f.Path, f.Size)).ToList(),
             "files"));
 
         long totalBytes = groups.Sum(g => g.Files.Sum(x => x.Size));
@@ -108,19 +124,28 @@ public sealed class SftpUploader
         if (wiki is not null && wiki.Manifest.Files.Count > 0)
             await CommitWikiManifestAsync(wiki, wikiStale, cancellationToken).ConfigureAwait(false);
 
-        // 3. Game files into <remoteBase>/files/.
+        // 3. Changed/new game files into <remoteBase>/files/.
         var gameGroup = groups[^1];
         var gameOffset = totalFiles - gameGroup.Files.Count;
         await UploadGroupAsync(gameGroup, gameOffset, totalFiles, totalBytes, state, sw, mode, cancellationToken)
             .ConfigureAwait(false);
 
-        // 4. manifest.json — only after all game files are in place.
+        // 4. Stale game files — only now that every new/changed file is in place (see above).
+        if (gameStale.Count > 0)
+        {
+            AnsiConsole.Info($"Removing {gameStale.Count} stale game file(s)...");
+            await SftpClientWrapper.RemoveRemoteFilesAsync(
+                _options, gameStale.Select(p => RemotePath($"files/{p}")).ToList(), cancellationToken)
+                    .ConfigureAwait(false);
+        }
+
+        // 5. manifest.json — only after all game files are in place.
         AnsiConsole.Info("Uploading manifest.json...");
         await WithRetryAsync(
             () => SftpClientWrapper.UploadFileAsync(_options, localManifestPath, RemotePath("manifest.json"), cancellationToken),
             "manifest.json", cancellationToken).ConfigureAwait(false);
 
-        // 5. version.json — always LAST (see above).
+        // 6. version.json — always LAST (see above).
         AnsiConsole.Info("Uploading version.json...");
         await WithRetryAsync(
             () => SftpClientWrapper.UploadFileAsync(_options, localVersionPath, RemotePath("version.json"), cancellationToken),
@@ -168,13 +193,14 @@ public sealed class SftpUploader
     }
 
     /// <summary>
-    /// Downloads the previous wiki_manifest.json from the server. Returns null when it does not exist
-    /// yet (first wiki upload) or is unreadable/corrupt (falls back to a full re-upload).
+    /// Downloads the previous remote manifest by file name (manifest.json / wiki_manifest.json).
+    /// Returns null when it does not exist yet (first upload) or is unreadable/corrupt
+    /// (falls back to a full re-upload).
     /// </summary>
-    private async Task<Manifest?> DownloadWikiManifestAsync(CancellationToken ct)
+    private async Task<Manifest?> DownloadRemoteManifestAsync(string fileName, CancellationToken ct)
     {
-        var remote = RemotePath(ManifestBuilder.WikiManifestFileName);
-        var local = Path.Combine(Path.GetTempPath(), "gameup-wiki-prev-" + Guid.NewGuid().ToString("N") + ".json");
+        var remote = RemotePath(fileName);
+        var local = Path.Combine(Path.GetTempPath(), "gameup-prev-" + Guid.NewGuid().ToString("N") + ".json");
 
         try
         {
@@ -194,13 +220,13 @@ public sealed class SftpUploader
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
-                        AnsiConsole.Warn($"Remote wiki_manifest.json is unreadable ({FirstLine(ex.Message)}); re-uploading the whole wiki.");
+                        AnsiConsole.Warn($"Remote {fileName} is unreadable ({FirstLine(ex.Message)}); falling back to a full upload.");
                         return null;
                     }
                 }
 
                 if (stderrTail.Contains("No such file", StringComparison.OrdinalIgnoreCase))
-                    return null; // no previous manifest — first wiki upload
+                    return null; // no previous manifest — first upload
 
                 AnsiConsole.Warn($"Downloading {remote} failed (attempt {attempt}/{_maxRetries}): {FirstLine(stderrTail)}");
                 await BackoffAsync(attempt, ct).ConfigureAwait(false);

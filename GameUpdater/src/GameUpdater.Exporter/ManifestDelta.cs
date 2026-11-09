@@ -2,17 +2,17 @@ using GameUpdater.Shared.Models;
 
 namespace GameUpdater.Exporter;
 
-/// <summary>Result of comparing the local wiki manifest against the previous remote one.</summary>
-public sealed record WikiDeltaResult(IReadOnlyList<FileEntry> ToUpload, IReadOnlyList<string> StalePaths);
+/// <summary>Result of comparing a local manifest against the previous remote one.</summary>
+public sealed record ManifestDeltaResult(IReadOnlyList<FileEntry> ToUpload, IReadOnlyList<string> StalePaths);
 
 /// <summary>
-/// Computes which wiki files must be uploaded and which stale remote files should be removed.
+/// Computes which files must be uploaded and which stale remote files should be removed.
 /// A file is "changed" when its path is missing from the previous manifest or its hash differs
 /// (hashes are compared case-insensitively). Files present only in the previous manifest are stale.
 /// </summary>
-public static class WikiDelta
+public static class ManifestDelta
 {
-    public static WikiDeltaResult Compute(Manifest local, Manifest? previous)
+    public static ManifestDeltaResult Compute(Manifest local, Manifest? previous)
     {
         var toUpload = new List<FileEntry>();
 
@@ -44,6 +44,6 @@ public static class WikiDelta
                     stalePaths.Add(entry.Path);
         }
 
-        return new WikiDeltaResult(toUpload, stalePaths);
+        return new ManifestDeltaResult(toUpload, stalePaths);
     }
 }
